@@ -1,0 +1,262 @@
+# ==========================================
+# Multimodal AI Agent - Project-wide ignores
+# ==========================================
+
+# ---------- Secrets and environment ----------
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+secrets/
+.secret/
+secrets.json
+credentials.json
+service-account*.json
+*_credentials.json
+*.credentials
+
+# ---------- Python virtual environments ----------
+.venv/
+venv/
+env/
+ENV/
+.python-version.local
+
+# ---------- Python bytecode and caches ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.so
+.python_history
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# ---------- Python packaging and builds ----------
+build/
+dist/
+wheels/
+pip-wheel-metadata/
+*.egg
+*.egg-info/
+.eggs/
+MANIFEST
+site/
+
+# ---------- Python test and coverage output ----------
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
+.tox/
+.nox/
+test-results/
+junit.xml
+pytestdebug.log
+
+# ---------- Jupyter notebooks ----------
+.ipynb_checkpoints/
+.profile/
+jupyter_runtime/
+
+# ---------- IDEs and editors ----------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.iml
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ---------- Operating systems ----------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.Spotlight-V100/
+.Trashes/
+
+# ---------- Node.js and React ----------
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.npm/
+.pnpm-store/
+.parcel-cache/
+.turbo/
+.next/
+.nuxt/
+.output/
+.svelte-kit/
+dist/
+frontend/dist/
+frontend/build/
+coverage/
+*.tsbuildinfo
+
+# Keep dependency lockfiles tracked:
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
+
+# ---------- Logs and runtime files ----------
+*.log
+logs/
+log/
+*.pid
+*.pid.lock
+pids/
+*.seed
+*.stackdump
+npm-debug.log*
+uvicorn.log
+
+# ---------- Local application data ----------
+instance/
+local_data/
+local-data/
+tmp/
+temp/
+scratch/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# ---------- Uploaded user content ----------
+uploads/
+uploaded_files/
+user_uploads/
+private_uploads/
+
+# ---------- Generated reports and exports ----------
+generated/
+generated_reports/
+exports/
+*.report.tmp
+
+# ---------- AI/ML datasets and artifacts ----------
+datasets/raw/
+datasets/private/
+data/raw/
+data/private/
+data/processed/
+data/interim/
+artifacts/
+checkpoints/
+runs/
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+outputs/
+predictions/
+embeddings/
+vector_store/
+vectorstore/
+faiss_index/
+
+# ---------- Model weights and large binary files ----------
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.engine
+*.gguf
+*.ggml
+*.h5
+*.hdf5
+*.pb
+*.tflite
+*.model
+*.bin
+
+# Allow explicitly approved small model metadata/configuration files.
+# Do not ignore every JSON/YAML file globally.
+
+# ---------- Audio, video, and image processing output ----------
+recordings/
+audio_output/
+video_output/
+processed_media/
+*.wav
+*.mp3
+*.mp4
+*.mov
+*.avi
+*.webm
+*.m4a
+
+# Keep source assets explicitly tracked when appropriate.
+# Use Git LFS or external storage for approved large assets.
+
+# ---------- Local databases and database exports ----------
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+*.bak.sql
+database_data/
+postgres_data/
+pgdata/
+*.wal
+*.shm
+
+# ---------- Docker and local infrastructure ----------
+docker-compose.override.yml
+compose.override.yaml
+docker-compose.local.yml
+*.local.yaml
+*.local.yml
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+terraform.tfvars.json
+override.tf
+override.tf.json
+crash.log
+crash.*.log
+
+# ---------- Local configuration ----------
+*.local
+*.local.*
+config.local.*
+settings.local.*
+.DS_Store?
+
+# ---------- Generated documentation ----------
+docs/_build/
+mkdocs_site/
