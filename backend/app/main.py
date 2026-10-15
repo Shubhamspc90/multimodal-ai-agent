@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.app.api.routes.health import router as health_router
+from backend.app.api.routes.text import router as text_router
 from backend.app.core.config import get_settings
 from backend.app.core.logging import configure_logging
 
@@ -24,3 +25,4 @@ app = FastAPI(
 )
 
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(text_router, prefix="/api/v1")
