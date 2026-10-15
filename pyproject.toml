@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "A research-oriented multimodal AI agent with controlled tool execution and verification."
 requires-python = ">=3.12"
 
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "Pillow",
+]
+
 [dependency-groups]
 dev = [
     "pytest",
