@@ -1,0 +1,18 @@
+
+[project]
+name = "multimodal-ai-agent"
+version = "0.1.0"
+description = "A research-oriented multimodal AI agent with controlled tool execution and verification."
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
