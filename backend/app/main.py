@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from backend.app.api.routes.audio import router as audio_router
 from backend.app.api.routes.health import router as health_router
 from backend.app.api.routes.image import router as image_router
 from backend.app.api.routes.text import router as text_router
@@ -28,3 +29,4 @@ app = FastAPI(
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(text_router, prefix="/api/v1")
 app.include_router(image_router, prefix="/api/v1")
+app.include_router(audio_router, prefix="/api/v1")
