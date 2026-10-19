@@ -4,6 +4,7 @@ import pytest
 
 from backend.app.schemas.agent import AgentInputType, AgentRequest
 from backend.app.services.agent_service import AgentService
+from backend.app.services.tool_router import RoutingDecision, ToolName
 
 
 class FakeTextProvider:
@@ -42,3 +43,39 @@ async def test_process_text_rejects_empty_provider_output() -> None:
 
     with pytest.raises(ValueError, match="empty response"):
         await service.process_text(AgentRequest(message="Hello"))
+
+
+class IncompatibleToolRouter:
+    """Return an incompatible tool to test orchestration safeguards."""
+
+    def route(self, input_type: AgentInputType) -> RoutingDecision:
+        return RoutingDecision(
+            input_type=input_type,
+            tool=ToolName.IMAGE_UNDERSTANDING,
+        )
+
+
+class TrackingTextProvider:
+    """Track whether the text provider was called."""
+
+    def __init__(self) -> None:
+        self.called = False
+
+    async def generate_text(self, message: str) -> str:
+        self.called = True
+        return "This response should not be generated."
+
+
+@pytest.mark.asyncio
+async def test_process_text_rejects_incompatible_tool_before_provider_call() -> None:
+    """Reject incompatible routing decisions without calling the provider."""
+    provider = TrackingTextProvider()
+    service = AgentService(
+        text_provider=provider,
+        tool_router=IncompatibleToolRouter(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match="Unsupported tool for text input"):
+        await service.process_text(AgentRequest(message="Hello"))
+
+    assert provider.called is False
