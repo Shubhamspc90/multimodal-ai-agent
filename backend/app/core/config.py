@@ -1,5 +1,8 @@
+"""Centralized application configuration."""
+
 from functools import lru_cache
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +12,27 @@ class Settings(BaseSettings):
     app_name: str = "Multimodal AI Agent API"
     app_environment: str = "development"
     log_level: str = "INFO"
+
+    # Read credentials and model configuration from environment variables.
+    ollama_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="OLLAMA_API_KEY",
+    )
+    ollama_model: str = Field(
+        default="gemma4:31b",
+        min_length=1,
+        validation_alias="OLLAMA_MODEL",
+    )
+    ollama_base_url: str = Field(
+        default="https://ollama.com/api",
+        validation_alias="OLLAMA_BASE_URL",
+    )
+    ollama_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        le=300,
+        validation_alias="OLLAMA_TIMEOUT_SECONDS",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="APP_",
@@ -21,5 +45,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Return cached application settings."""
-
     return Settings()
