@@ -1,7 +1,5 @@
 """Interfaces for AI model providers."""
-
 from typing import Protocol
-
 
 class TextModelProvider(Protocol):
     """Define the contract required by a text-generation provider."""

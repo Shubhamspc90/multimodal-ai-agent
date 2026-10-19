@@ -6,8 +6,6 @@ from backend.app.schemas.agent import (
     AgentResponse,
 )
 from backend.app.services.model_provider import TextModelProvider
-
-
 class AgentService:
     """Coordinate text requests independently of the model provider."""
 

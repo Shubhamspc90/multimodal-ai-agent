@@ -1,10 +1,8 @@
 """Unit tests for the core agent orchestration service."""
-
 import pytest
 
 from backend.app.schemas.agent import AgentInputType, AgentRequest
 from backend.app.services.agent_service import AgentService
-
 
 class FakeTextProvider:
     """Provide deterministic responses without network access."""
@@ -13,14 +11,12 @@ class FakeTextProvider:
         # Echoing the input makes the test predictable and repeatable.
         return f"Processed: {message}"
 
-
 class EmptyTextProvider:
     """Simulate a provider that returns no usable content."""
 
     async def generate_text(self, message: str) -> str:
         # Exercise the service's empty-output safeguard.
         return "   "
-
 
 @pytest.mark.asyncio
 async def test_process_text_returns_standardized_response() -> None:
