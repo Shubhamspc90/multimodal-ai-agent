@@ -1,0 +1,17 @@
+"""Pydantic schemas for document processing."""
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class DocumentExtractionResponse(BaseModel):
+    """Represent extracted document text and metadata."""
+
+    status: Literal["extracted"] = "extracted"
+    filename: str
+    content_type: str
+    size_bytes: int = Field(gt=0)
+    document_format: Literal["PDF", "TXT"]
+    text: str
+    page_count: int | None = Field(default=None, ge=1)

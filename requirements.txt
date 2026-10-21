@@ -30,3 +30,5 @@ ruff>=0.8,<1.0
 # Speech recognition
 faster-whisper>=1.1,<2.0
 av>=11,<19
+
+pypdf>=5.0,<7.0
