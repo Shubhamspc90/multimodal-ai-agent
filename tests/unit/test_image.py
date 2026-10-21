@@ -1,8 +1,10 @@
 from io import BytesIO
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from backend.app.api.routes.image import get_image_service
 from backend.app.main import app
 
 client = TestClient(app)
@@ -20,27 +22,39 @@ def create_png_bytes() -> bytes:
 
 
 def test_image_endpoint_accepts_valid_png() -> None:
-    response = client.post(
-        "/api/v1/images",
-        files={
-            "file": (
-                "test.png",
-                create_png_bytes(),
-                "image/png",
-            )
-        },
-    )
+    mock_service = AsyncMock()
+    mock_service.process_image.return_value = "A red rectangular image."
+
+    app.dependency_overrides[get_image_service] = lambda: mock_service
+
+    try:
+        response = client.post(
+            "/api/v1/images",
+            files={
+                "file": (
+                    "test.png",
+                    create_png_bytes(),
+                    "image/png",
+                )
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_image_service, None)
 
     assert response.status_code == 200
     assert response.json() == {
-        "status": "accepted",
+        "status": "completed",
         "filename": "test.png",
         "content_type": "image/png",
         "size_bytes": len(create_png_bytes()),
         "image_format": "PNG",
         "width": 2,
         "height": 3,
+        "response": "A red rectangular image.",
+        "capability": "image_understanding",
     }
+
+    mock_service.process_image.assert_awaited_once()
 
 
 def test_image_endpoint_rejects_unsupported_content_type() -> None:

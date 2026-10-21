@@ -18,15 +18,26 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="OLLAMA_API_KEY",
     )
+
+    # Text-generation model.
     ollama_model: str = Field(
         default="gemma4:31b",
         min_length=1,
         validation_alias="OLLAMA_MODEL",
     )
+
+    # Vision model, configured independently from the text model.
+    ollama_vision_model: str = Field(
+        default="gemma4:31b",
+        min_length=1,
+        validation_alias="OLLAMA_VISION_MODEL",
+    )
+
     ollama_base_url: str = Field(
         default="https://ollama.com/api",
         validation_alias="OLLAMA_BASE_URL",
     )
+
     ollama_timeout_seconds: float = Field(
         default=60.0,
         gt=0,
@@ -46,3 +57,7 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached application settings."""
     return Settings()
+
+
+# Shared settings instance used by application services.
+settings = get_settings()
