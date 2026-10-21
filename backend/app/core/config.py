@@ -45,6 +45,25 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_TIMEOUT_SECONDS",
     )
 
+    # Local speech-to-text model configuration.
+    whisper_model: str = Field(
+        default="base",
+        min_length=1,
+        validation_alias="WHISPER_MODEL",
+    )
+
+    whisper_device: str = Field(
+        default="cpu",
+        min_length=1,
+        validation_alias="WHISPER_DEVICE",
+    )
+
+    whisper_compute_type: str = Field(
+        default="int8",
+        min_length=1,
+        validation_alias="WHISPER_COMPUTE_TYPE",
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="APP_",
         env_file=".env",

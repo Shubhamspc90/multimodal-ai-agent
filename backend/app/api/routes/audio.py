@@ -10,14 +10,14 @@ from backend.app.schemas.audio import (
     AudioInputResponse,
     AudioTranscriptionResponse,
 )
-from backend.app.services.speech_to_text import transcribe_wav
+from backend.app.services.speech_to_text_service import SpeechToTextService
 
 # Logger for recording errors and important events in this module.
 logger = logging.getLogger(__name__)
 
 # Group all audio-related API endpoints under the "Audio" tag.
 router = APIRouter(tags=["Audio"])
-
+speech_to_text_service = SpeechToTextService()
 # Maximum allowed uploaded audio size: 10 MiB.
 MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024
 
@@ -164,7 +164,10 @@ async def transcribe_audio(
 
     try:
         # Run CPU-heavy transcription in a thread pool to avoid blocking the event loop.
-        result = await run_in_threadpool(transcribe_wav, contents)
+        result = await run_in_threadpool(
+            speech_to_text_service.transcribe,
+            contents,
+        )
     except Exception as exc:
         # Log the full transcription failure for debugging.
         logger.exception("Audio transcription failed")

@@ -4,6 +4,8 @@ from io import BytesIO
 import pytest
 from fastapi.testclient import TestClient
 
+# Import the audio route module so its function can be replaced in the test.
+from backend.app.api.routes import audio as audio_route
 from backend.app.main import app
 from backend.app.services.speech_to_text import TranscriptionResult
 
@@ -110,8 +112,6 @@ def test_audio_endpoint_rejects_oversized_file() -> None:
 def test_audio_transcription_returns_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Import the audio route module so its function can be replaced in the test.
-    from backend.app.api.routes import audio as audio_route
 
     # Create a fake transcription function instead of loading the real Whisper model.
     def fake_transcribe_wav(audio_bytes: bytes) -> TranscriptionResult:
@@ -127,8 +127,8 @@ def test_audio_transcription_returns_transcript(
 
     # Replace the real transcription function with the fake one.
     monkeypatch.setattr(
-        audio_route,
-        "transcribe_wav",
+        audio_route.speech_to_text_service,
+        "transcribe",
         fake_transcribe_wav,
     )
 
@@ -183,8 +183,8 @@ def test_audio_transcription_handles_model_failure(
 
     # Replace the real transcription function with the failing fake function.
     monkeypatch.setattr(
-        audio_route,
-        "transcribe_wav",
+        audio_route.speech_to_text_service,
+        "transcribe",
         failing_transcribe_wav,
     )
 
