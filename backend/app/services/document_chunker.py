@@ -1,4 +1,3 @@
-
 """Split document text into overlapping chunks for retrieval."""
 
 
