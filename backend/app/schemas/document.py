@@ -15,3 +15,15 @@ class DocumentExtractionResponse(BaseModel):
     document_format: Literal["PDF", "TXT"]
     text: str
     page_count: int | None = Field(default=None, ge=1)
+
+
+class DocumentSummarizationResponse(BaseModel):
+    """Represent a document summarization result."""
+
+    status: Literal["summarized"] = "summarized"
+    filename: str
+    content_type: str
+    size_bytes: int = Field(gt=0)
+    document_format: Literal["PDF", "TXT"]
+    summary: str
+    page_count: int | None = Field(default=None, ge=1)
