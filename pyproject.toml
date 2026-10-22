@@ -10,6 +10,7 @@ dependencies = [
     "python-multipart",
     "Pillow",
     "sentence-transformers>=6.2.0,<7.0.0",
+    "pgvector>=0.3.6,<1.0.0",
 ]
 
 [dependency-groups]

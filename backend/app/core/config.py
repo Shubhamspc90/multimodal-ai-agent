@@ -64,6 +64,37 @@ class Settings(BaseSettings):
         validation_alias="WHISPER_COMPUTE_TYPE",
     )
 
+    # PostgreSQL connection settings for document vector storage.
+    postgres_host: str = Field(
+        default="localhost",
+        min_length=1,
+        validation_alias="POSTGRES_HOST",
+    )
+
+    postgres_port: int = Field(
+        default=5433,
+        ge=1,
+        le=65535,
+        validation_alias="POSTGRES_PORT",
+    )
+
+    postgres_db: str = Field(
+        default="multimodal_ai_agent",
+        min_length=1,
+        validation_alias="POSTGRES_DB",
+    )
+
+    postgres_user: str = Field(
+        default="postgres",
+        min_length=1,
+        validation_alias="POSTGRES_USER",
+    )
+
+    postgres_password: SecretStr | None = Field(
+        default=None,
+        validation_alias="POSTGRES_PASSWORD",
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="APP_",
         env_file=".env",
