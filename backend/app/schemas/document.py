@@ -27,3 +27,16 @@ class DocumentSummarizationResponse(BaseModel):
     document_format: Literal["PDF", "TXT"]
     summary: str
     page_count: int | None = Field(default=None, ge=1)
+
+
+class DocumentQAResponse(BaseModel):
+    """Represent a document question-answering result."""
+
+    status: Literal["answered"] = "answered"
+    filename: str
+    content_type: str
+    size_bytes: int = Field(gt=0)
+    document_format: Literal["PDF", "TXT"]
+    question: str
+    answer: str
+    page_count: int | None = Field(default=None, ge=1)
