@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn",
     "python-multipart",
     "Pillow",
+    "sentence-transformers>=6.2.0,<7.0.0",
 ]
 
 [dependency-groups]
