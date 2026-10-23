@@ -130,3 +130,59 @@ def test_store_chunks_propagates_connection_errors(storage, database_mocks):
 
     with pytest.raises(psycopg.OperationalError, match="connection unavailable"):
         storage.store_chunks("document-1", ["chunk"], [[0.1] * 384])
+
+
+def test_search_similar_chunks_returns_ranked_results(storage, database_mocks):
+    """Return matching chunks with their similarity distances."""
+    connect, register, connection, cursor = database_mocks
+
+    cursor.fetchall.return_value = [
+        (2, "Relevant chunk", {"source": "test.txt"}, 0.12),
+        (0, "Another chunk", {"source": "test.txt"}, 0.28),
+    ]
+
+    results = storage.search_similar_chunks(
+        document_id="document-1",
+        query_embedding=[0.1] * 384,
+        limit=2,
+    )
+
+    assert len(results) == 2
+    assert results[0]["chunk_text"] == "Relevant chunk"
+    assert results[0]["distance"] == pytest.approx(0.12)
+    assert results[1]["chunk_index"] == 0
+
+    connect.assert_called_once()
+    register.assert_called_once_with(connection)
+
+    query, params = cursor.execute.call_args.args
+    assert "embedding <=> %s" in query
+    assert "WHERE document_id = %s" in query
+    assert "ORDER BY embedding <=> %s" in query
+    assert params[1] == "document-1"
+    assert params[3] == 2
+
+
+@pytest.mark.parametrize(
+    ("document_id", "embedding", "limit", "message"),
+    [
+        (" ", [0.1] * 384, 5, "document_id"),
+        ("document-1", [0.1] * 10, 5, "384 dimensions"),
+        ("document-1", [0.1] * 384, 0, "limit"),
+    ],
+)
+def test_search_similar_chunks_rejects_invalid_arguments(
+    storage,
+    database_mocks,
+    document_id,
+    embedding,
+    limit,
+    message,
+):
+    """Reject invalid search arguments without opening a connection."""
+    connect, *_ = database_mocks
+
+    with pytest.raises(ValueError, match=message):
+        storage.search_similar_chunks(document_id, embedding, limit)
+
+    connect.assert_not_called()
