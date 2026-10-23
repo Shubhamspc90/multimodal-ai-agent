@@ -63,7 +63,7 @@ RETRIEVAL_CASES = (
             "storage-9": "Structured logs capture application events.",
             "storage-10": "The speech service returns transcribed text.",
         },
-        relevant_chunk_ids=frozenset({"storage-1", "storage-2"}),
+        relevant_chunk_ids=frozenset({"storage-1"}),
     ),
     RetrievalCase(
         question="How is spoken audio converted into text?",
