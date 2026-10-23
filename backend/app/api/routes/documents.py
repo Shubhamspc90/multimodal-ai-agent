@@ -12,14 +12,17 @@ from backend.app.schemas.document import (
     DocumentQAResponse,
     DocumentSummarizationResponse,
 )
+from backend.app.services.document_chunker import DocumentChunker
 from backend.app.services.document_extractor import DocumentExtractionError
 from backend.app.services.document_qa_service import DocumentQAService
 from backend.app.services.document_service import DocumentService
+from backend.app.services.embedding_service import EmbeddingService
 from backend.app.services.ollama_provider import (
     OllamaCloudProvider,
     OllamaProviderError,
 )
 from backend.app.services.summarization_service import SummarizationService
+from backend.app.services.vector_storage import PostgresVectorStorage
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +208,13 @@ MAX_QUESTION_CHARACTERS = 1_000
 
 
 def get_document_qa_service() -> DocumentQAService:
-    """Build the document Q&A service using the configured Ollama provider."""
-
-    return DocumentQAService(OllamaCloudProvider(settings))
+    """Create a document Q&A service with semantic retrieval enabled."""
+    return DocumentQAService(
+        provider=OllamaCloudProvider(settings),
+        chunker=DocumentChunker(),
+        embedding_service=EmbeddingService(),
+        vector_storage=PostgresVectorStorage(settings),
+    )
 
 
 @router.post(

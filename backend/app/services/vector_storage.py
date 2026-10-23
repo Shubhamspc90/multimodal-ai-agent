@@ -102,3 +102,51 @@ class PostgresVectorStorage:
                 cursor.executemany(query, rows)
 
         return len(rows)
+
+    def search_similar_chunks(
+        self,
+        document_id: str,
+        query_embedding: Sequence[float],
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Retrieve the most relevant chunks belonging to one document."""
+        if not document_id.strip():
+            raise ValueError("document_id must not be empty.")
+
+        if len(query_embedding) != 384:
+            raise ValueError("Query embedding must contain 384 dimensions.")
+
+        if limit <= 0:
+            raise ValueError("limit must be greater than zero.")
+
+        query_vector = Vector(query_embedding)
+
+        query = """
+            SELECT
+                chunk_index,
+                chunk_text,
+                metadata,
+                embedding <=> %s AS distance
+            FROM document_chunks
+            WHERE document_id = %s
+            ORDER BY embedding <=> %s
+            LIMIT %s
+        """
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    query,
+                    (query_vector, document_id, query_vector, limit),
+                )
+                rows = cursor.fetchall()
+
+        return [
+            {
+                "chunk_index": row[0],
+                "chunk_text": row[1],
+                "metadata": row[2],
+                "distance": float(row[3]),
+            }
+            for row in rows
+        ]
