@@ -41,11 +41,12 @@ def evaluate_retrieval() -> dict[str, float]:
 
         query_embedding = embedding_service.embed_text(case.question)
 
-        # Retrieve once at the largest cutoff for a fair comparison.
+        # Retrieve all candidates for diagnostics; metrics still use their
+        # configured cutoffs.
         results = vector_storage.search_similar_chunks(
             document_id=document_id,
             query_embedding=query_embedding,
-            limit=max(EVALUATION_CUTOFFS),
+            limit=len(chunk_ids),
         )
 
         ranked_chunk_ids = [chunk_ids[result["chunk_index"]] for result in results]
