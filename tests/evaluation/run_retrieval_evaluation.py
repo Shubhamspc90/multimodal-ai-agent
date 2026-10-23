@@ -56,7 +56,14 @@ def evaluate_retrieval() -> dict[str, float]:
 
         print(f"\nQuestion: {case.question}")
         print(f"Expected relevant chunks: {sorted(relevant_chunk_ids)}")
-        print(f"Retrieved ranked chunks: {ranked_chunk_ids}")
+        print("Retrieved ranked chunks:")
+        for rank, result in enumerate(results, start=1):
+            chunk_id = chunk_ids[result["chunk_index"]]
+            relevance = "RELEVANT" if chunk_id in relevant_chunk_ids else "NOT RELEVANT"
+            print(
+                f"  {rank}. {chunk_id} | "
+                f"distance={result['distance']:.4f} | {relevance}"
+            )
 
         for k in EVALUATION_CUTOFFS:
             precision = precision_at_k(
