@@ -48,10 +48,7 @@ def evaluate_retrieval() -> dict[str, float]:
             limit=max(EVALUATION_CUTOFFS),
         )
 
-        ranked_chunk_ids = [
-            chunk_ids[result["chunk_index"]]
-            for result in results
-        ]
+        ranked_chunk_ids = [chunk_ids[result["chunk_index"]] for result in results]
         relevant_chunk_ids = set(case.relevant_chunk_ids)
 
         ranked_results.append(ranked_chunk_ids)
@@ -97,12 +94,8 @@ def evaluate_retrieval() -> dict[str, float]:
             )
         ]
 
-        metrics[f"precision_at_{k}"] = sum(precision_scores) / len(
-            precision_scores
-        )
-        metrics[f"recall_at_{k}"] = sum(recall_scores) / len(
-            recall_scores
-        )
+        metrics[f"precision_at_{k}"] = sum(precision_scores) / len(precision_scores)
+        metrics[f"recall_at_{k}"] = sum(recall_scores) / len(recall_scores)
 
     metrics["mean_reciprocal_rank"] = mean_reciprocal_rank(
         ranked_results,
