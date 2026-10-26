@@ -1,5 +1,6 @@
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { checkApiHealth } from "./lib/api";
 import {
   AudioLines,
   Bot,
@@ -33,6 +34,63 @@ function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("Chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const [apiStatus, setApiStatus] = useState<
+    "checking" | "connected" | "disconnected"
+  >("checking");
+
+  const [apiError, setApiError] = useState("");
+
+  const checkHealth = useCallback(async () => {
+    setApiStatus("checking");
+    setApiError("");
+
+    try {
+      const result = await checkApiHealth();
+
+      if (result.status !== "ok") {
+        throw new Error("The API returned an unexpected health status.");
+      }
+
+      setApiStatus("connected");
+    } catch (error: unknown) {
+      setApiStatus("disconnected");
+      setApiError(
+        error instanceof Error ? error.message : "Unable to reach the API.",
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+  let cancelled = false;
+
+  const loadHealth = async () => {
+    try {
+      const result = await checkApiHealth();
+
+      if (cancelled) return;
+
+      if (result.status !== "ok") {
+        throw new Error("The API returned an unexpected health status.");
+      }
+
+      setApiError("");
+      setApiStatus("connected");
+    } catch (error: unknown) {
+      if (cancelled) return;
+
+      setApiStatus("disconnected");
+      setApiError(
+        error instanceof Error ? error.message : "Unable to reach the API.",
+      );
+    }
+  };
+
+  void loadHealth();
+
+  return () => {
+    cancelled = true;
+  };
+}, []);
   const active = workspaces.find((item) => item.name === activeWorkspace)!;
   const ActiveIcon = active.icon;
 
@@ -134,6 +192,31 @@ function App() {
             <span className="environment-badge">
               <span className="status-dot" /> Development
             </span>
+
+            <div
+              className={`api-status api-status-${apiStatus}`}
+              role="status"
+              aria-live="polite"
+              title={apiError || "Backend API health status"}
+            >
+              <span className="status-dot" />
+              <span>
+                {apiStatus === "checking" && "API checking"}
+                {apiStatus === "connected" && "API connected"}
+                {apiStatus === "disconnected" && "API disconnected"}
+              </span>
+
+              {apiStatus === "disconnected" && (
+                <button
+                  type="button"
+                  className="api-retry"
+                  onClick={() => void checkHealth()}
+                  aria-label="Retry API health check"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
             <button className="icon-button" aria-label="Search workspace">
               <Search size={18} />
             </button>
