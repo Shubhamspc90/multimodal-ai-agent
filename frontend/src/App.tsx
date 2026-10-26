@@ -1,7 +1,6 @@
 
 import { useCallback, useEffect, useState } from "react";
-import { checkApiHealth } from "./lib/api";
-import {
+import { apiRequest, checkApiHealth } from "./lib/api"; import {
   AudioLines,
   Bot,
   ChevronDown,
@@ -18,22 +17,35 @@ import {
 import "./App.css";
 
 type Workspace = "Chat" | "Documents" | "Images" | "Audio";
+type ChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+};
+
+type TextInputResponse = {
+  received_message: string;
+  status?: string;
+};
 
 const workspaces: {
   name: Workspace;
   icon: typeof MessageSquare;
   description: string;
 }[] = [
-  { name: "Chat", icon: MessageSquare, description: "Ask questions and explore ideas." },
-  { name: "Documents", icon: FileText, description: "Extract, summarize, and ask questions about files." },
-  { name: "Images", icon: Image, description: "Upload an image for visual analysis." },
-  { name: "Audio", icon: AudioLines, description: "Transcribe supported audio files." },
-];
+    { name: "Chat", icon: MessageSquare, description: "Ask questions and explore ideas." },
+    { name: "Documents", icon: FileText, description: "Extract, summarize, and ask questions about files." },
+    { name: "Images", icon: Image, description: "Upload an image for visual analysis." },
+    { name: "Audio", icon: AudioLines, description: "Transcribe supported audio files." },
+  ];
 
 function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("Chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [messageDraft, setMessageDraft] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [chatError, setChatError] = useState("");
   const [apiStatus, setApiStatus] = useState<
     "checking" | "connected" | "disconnected"
   >("checking");
@@ -60,37 +72,81 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-  let cancelled = false;
+  const handleSendMessage = useCallback(async () => {
+    const message = messageDraft.trim();
 
-  const loadHealth = async () => {
-    try {
-      const result = await checkApiHealth();
-
-      if (cancelled) return;
-
-      if (result.status !== "ok") {
-        throw new Error("The API returned an unexpected health status.");
-      }
-
-      setApiError("");
-      setApiStatus("connected");
-    } catch (error: unknown) {
-      if (cancelled) return;
-
-      setApiStatus("disconnected");
-      setApiError(
-        error instanceof Error ? error.message : "Unable to reach the API.",
-      );
+    if (!message || isSending) {
+      return;
     }
-  };
 
-  void loadHealth();
+    const userMessage: ChatMessage = {
+      id: Date.now(),
+      role: "user",
+      content: message,
+    };
 
-  return () => {
-    cancelled = true;
-  };
-}, []);
+    setChatMessages((previous) => [...previous, userMessage]);
+    setMessageDraft("");
+    setChatError("");
+    setIsSending(true);
+
+    try {
+      const response = await apiRequest<TextInputResponse>("/api/v1/text", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ message }),
+      });
+
+      setChatMessages((previous) => [
+        ...previous,
+        {
+          id: Date.now() + 1,
+          role: "assistant",
+          content: response.received_message,
+        },
+      ]);
+    } catch (error: unknown) {
+      setChatError(
+        error instanceof Error ? error.message : "Unable to send your message.",
+      );
+    } finally {
+      setIsSending(false);
+    }
+  }, [messageDraft, isSending]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHealth = async () => {
+      try {
+        const result = await checkApiHealth();
+
+        if (cancelled) return;
+
+        if (result.status !== "ok") {
+          throw new Error("The API returned an unexpected health status.");
+        }
+
+        setApiError("");
+        setApiStatus("connected");
+      } catch (error: unknown) {
+        if (cancelled) return;
+
+        setApiStatus("disconnected");
+        setApiError(
+          error instanceof Error ? error.message : "Unable to reach the API.",
+        );
+      }
+    };
+
+    void loadHealth();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const active = workspaces.find((item) => item.name === activeWorkspace)!;
   const ActiveIcon = active.icon;
 
@@ -266,6 +322,78 @@ function App() {
               </button>
             ))}
           </div>
+          {activeWorkspace === "Chat" && (
+            <section className="chat-panel" aria-label="Chat">
+              <div className="chat-panel-heading">
+                <div>
+                  <h2>Start a conversation</h2>
+                  <p>Send a message to the connected backend.</p>
+                </div>
+                <span className="chat-mode-badge">API demo</span>
+              </div>
+
+              <div className="chat-messages" aria-live="polite">
+                {chatMessages.length === 0 && (
+                  <p className="chat-empty">
+                    Your conversation starts here. Send a message below.
+                  </p>
+                )}
+
+                {chatMessages.map((message) => (
+                  <article
+                    key={message.id}
+                    className={`chat-message chat-message-${message.role}`}
+                  >
+                    <span className="chat-message-role">
+                      {message.role === "user" ? "You" : "Backend response"}
+                    </span>
+                    <p>{message.content}</p>
+                  </article>
+                ))}
+
+                {isSending && (
+                  <p className="chat-loading" role="status">
+                    Sending message…
+                  </p>
+                )}
+              </div>
+
+              {chatError && (
+                <p className="chat-error" role="alert">
+                  {chatError}
+                </p>
+              )}
+
+              <form
+                className="chat-composer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleSendMessage();
+                }}
+              >
+                <textarea
+                  aria-label="Your message"
+                  placeholder="Ask something..."
+                  value={messageDraft}
+                  onChange={(event) => setMessageDraft(event.target.value)}
+                  maxLength={10000}
+                  rows={2}
+                  disabled={isSending}
+                />
+
+                <button
+                  type="submit"
+                  disabled={isSending || !messageDraft.trim()}
+                >
+                  {isSending ? "Sending..." : "Send message"}
+                </button>
+              </form>
+
+              <p className="chat-disclaimer">
+                Current backend behavior: echoes your submitted message.
+              </p>
+            </section>
+          )}
 
           <div className="notice">
             <div className="notice-icon"><Bot size={18} /></div>
