@@ -27,6 +27,22 @@ type TextInputResponse = {
   received_message: string;
   status?: string;
 };
+type DocumentAction = "extract" | "summarize" | "ask";
+
+type DocumentApiResponse = {
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  document_format: "PDF" | "TXT";
+  page_count: number | null;
+  text?: string;
+  summary?: string;
+  question?: string;
+  answer?: string;
+};
+
+const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_DOCUMENT_QUESTION_LENGTH = 1000;
 
 const workspaces: {
   name: Workspace;
@@ -42,10 +58,18 @@ const workspaces: {
 function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("Chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [messageDraft, setMessageDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [chatError, setChatError] = useState("");
+
+  const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
+  const [documentQuestion, setDocumentQuestion] = useState("");
+  const [documentAction, setDocumentAction] = useState<DocumentAction | null>(null);
+  const [documentResult, setDocumentResult] = useState<DocumentApiResponse | null>(null);
+  const [documentError, setDocumentError] = useState("");
+
   const [apiStatus, setApiStatus] = useState<
     "checking" | "connected" | "disconnected"
   >("checking");
@@ -115,6 +139,90 @@ function App() {
       setIsSending(false);
     }
   }, [messageDraft, isSending]);
+
+  const handleDocumentAction = useCallback(
+    async (action: DocumentAction) => {
+      if (documentAction !== null) return;
+
+      if (!selectedDocument) {
+        setDocumentError("Please select a PDF or TXT document first.");
+        return;
+      }
+
+      const extension = selectedDocument.name
+        .split(".")
+        .pop()
+        ?.toLowerCase();
+
+      if (extension !== "pdf" && extension !== "txt") {
+        setDocumentError("Only PDF and TXT documents are supported.");
+        return;
+      }
+
+      if (selectedDocument.size === 0) {
+        setDocumentError("The selected document is empty.");
+        return;
+      }
+
+      if (selectedDocument.size > MAX_DOCUMENT_SIZE_BYTES) {
+        setDocumentError("The document must not exceed 10 MiB.");
+        return;
+      }
+
+      const normalizedQuestion = documentQuestion.trim();
+
+      if (action === "ask" && !normalizedQuestion) {
+        setDocumentError("Please enter a question about the document.");
+        return;
+      }
+
+      if (
+        action === "ask" &&
+        normalizedQuestion.length > MAX_DOCUMENT_QUESTION_LENGTH
+      ) {
+        setDocumentError("Your question must not exceed 1,000 characters.");
+        return;
+      }
+
+      const endpointByAction: Record<DocumentAction, string> = {
+        extract: "/api/v1/documents/extract",
+        summarize: "/api/v1/documents/summarize",
+        ask: "/api/v1/documents/ask",
+      };
+
+      const formData = new FormData();
+      formData.append("file", selectedDocument);
+
+      if (action === "ask") {
+        formData.append("question", normalizedQuestion);
+      }
+
+      setDocumentAction(action);
+      setDocumentError("");
+      setDocumentResult(null);
+
+      try {
+        const response = await apiRequest<DocumentApiResponse>(
+          endpointByAction[action],
+          {
+            method: "POST",
+            body: formData,
+          },
+        );
+
+        setDocumentResult(response);
+      } catch (error: unknown) {
+        setDocumentError(
+          error instanceof Error
+            ? error.message
+            : "Unable to process the document. Please try again.",
+        );
+      } finally {
+        setDocumentAction(null);
+      }
+    },
+    [documentAction, selectedDocument, documentQuestion],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -195,7 +303,7 @@ function App() {
             >
               <Icon size={18} strokeWidth={1.8} />
               <span>{name}</span>
-              {name === "Chat" && <span className="nav-dot" />}
+              {activeWorkspace === name && <span className="nav-dot" />}
             </button>
           ))}
         </nav>
@@ -392,6 +500,164 @@ function App() {
               <p className="chat-disclaimer">
                 Current backend behavior: echoes your submitted message.
               </p>
+            </section>
+          )}
+
+                    {activeWorkspace === "Documents" && (
+            <section className="document-panel" aria-label="Document tools">
+              <div className="document-panel-heading">
+                <div>
+                  <h2>Understand your documents</h2>
+                  <p>Upload a PDF or TXT file to get started.</p>
+                </div>
+                <span className="chat-mode-badge">Document AI</span>
+              </div>
+
+              <label className="document-upload">
+                <FileText size={26} />
+                <strong>
+                  {selectedDocument
+                    ? selectedDocument.name
+                    : "Choose a document"}
+                </strong>
+                <span>
+                  {selectedDocument
+                    ? `${(selectedDocument.size / 1024).toFixed(1)} KB`
+                    : "PDF or TXT · Maximum 10 MiB"}
+                </span>
+                <input
+                  type="file"
+                  accept=".pdf,.txt,application/pdf,text/plain"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    setSelectedDocument(file);
+                    setDocumentResult(null);
+                    setDocumentError("");
+                    event.target.value = "";
+                  }}
+                  disabled={documentAction !== null}
+                />
+              </label>
+
+              <div className="document-actions">
+                <button
+                  type="button"
+                  onClick={() => void handleDocumentAction("extract")}
+                  disabled={documentAction !== null}
+                >
+                  {documentAction === "extract"
+                    ? "Extracting..."
+                    : "Extract text"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleDocumentAction("summarize")}
+                  disabled={documentAction !== null}
+                >
+                  {documentAction === "summarize"
+                    ? "Summarizing..."
+                    : "Summarize"}
+                </button>
+              </div>
+
+              <form
+                className="document-question-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleDocumentAction("ask");
+                }}
+              >
+                <label htmlFor="document-question">
+                  Ask a question about this document
+                </label>
+                <textarea
+                  id="document-question"
+                  value={documentQuestion}
+                  onChange={(event) => setDocumentQuestion(event.target.value)}
+                  placeholder="e.g. What are the main points?"
+                  rows={3}
+                  maxLength={MAX_DOCUMENT_QUESTION_LENGTH}
+                  disabled={documentAction !== null}
+                />
+                <div className="document-question-footer">
+                  <span>{documentQuestion.length}/1000 characters</span>
+                  <button
+                    type="submit"
+                    disabled={
+                      documentAction !== null || !documentQuestion.trim()
+                    }
+                  >
+                    {documentAction === "ask"
+                      ? "Thinking..."
+                      : "Ask question"}
+                  </button>
+                </div>
+              </form>
+
+              {documentError && (
+                <p className="document-error" role="alert">
+                  {documentError}
+                </p>
+              )}
+
+              {documentAction !== null && (
+                <p className="document-loading" role="status" aria-live="polite">
+                  {documentAction === "extract" && "Extracting document text..."}
+                  {documentAction === "summarize" && "Generating summary..."}
+                  {documentAction === "ask" && "Finding an answer..."}
+                </p>
+              )}
+
+              {documentResult && (
+                <section
+                  className="document-result"
+                  aria-live="polite"
+                  aria-label="Document result"
+                >
+                  <div className="document-result-heading">
+                    <div>
+                      <h3>
+                        {documentResult.text !== undefined && "Extracted text"}
+                        {documentResult.summary !== undefined && "Summary"}
+                        {documentResult.answer !== undefined && "Answer"}
+                      </h3>
+                      <p>
+                        {documentResult.filename} ·{" "}
+                        {documentResult.document_format}
+                        {documentResult.page_count != null &&
+                          ` · ${documentResult.page_count} pages`}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const content =
+                          documentResult.text ??
+                          documentResult.summary ??
+                          documentResult.answer ??
+                          "";
+                        void navigator.clipboard.writeText(content);
+                      }}
+                    >
+                      Copy result
+                    </button>
+                  </div>
+
+                  {documentResult.question && (
+                    <p className="document-result-question">
+                      <strong>Question:</strong> {documentResult.question}
+                    </p>
+                  )}
+
+                  <pre className="document-result-content">
+                    {documentResult.text ??
+                      documentResult.summary ??
+                      documentResult.answer ??
+                      "The API returned no result text."}
+                  </pre>
+                </section>
+              )}
             </section>
           )}
 
