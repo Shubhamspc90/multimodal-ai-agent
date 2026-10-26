@@ -44,6 +44,20 @@ type DocumentApiResponse = {
 const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_DOCUMENT_QUESTION_LENGTH = 1000;
 
+type ImageUnderstandingResponse = {
+  status: "completed";
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  image_format: "JPEG" | "PNG" | "WEBP";
+  width: number;
+  height: number;
+  response: string;
+  capability: "image_understanding";
+};
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_IMAGE_PROMPT = "Describe this image in detail.";
+
 const workspaces: {
   name: Workspace;
   icon: typeof MessageSquare;
@@ -69,6 +83,12 @@ function App() {
   const [documentAction, setDocumentAction] = useState<DocumentAction | null>(null);
   const [documentResult, setDocumentResult] = useState<DocumentApiResponse | null>(null);
   const [documentError, setDocumentError] = useState("");
+
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePrompt, setImagePrompt] = useState(DEFAULT_IMAGE_PROMPT);
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  const [imageResult, setImageResult] = useState<ImageUnderstandingResponse | null>(null);
+  const [imageError, setImageError] = useState("");
 
   const [apiStatus, setApiStatus] = useState<
     "checking" | "connected" | "disconnected"
@@ -223,6 +243,66 @@ function App() {
     },
     [documentAction, selectedDocument, documentQuestion],
   );
+
+  const handleImageAnalysis = useCallback(async () => {
+    if (isAnalyzingImage) return;
+
+    if (!selectedImage) {
+      setImageError("Please select an image first.");
+      return;
+    }
+
+    const supportedTypes = ["image/jpeg", "image/png", "image/webp"];
+
+    if (!supportedTypes.includes(selectedImage.type)) {
+      setImageError("Please select a JPEG, PNG, or WEBP image.");
+      return;
+    }
+
+    if (selectedImage.size === 0) {
+      setImageError("The selected image is empty.");
+      return;
+    }
+
+    if (selectedImage.size > MAX_IMAGE_SIZE_BYTES) {
+      setImageError("The image must not exceed 5 MiB.");
+      return;
+    }
+
+    if (!imagePrompt.trim()) {
+      setImageError("Please enter a prompt for the image.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", selectedImage);
+    formData.append("prompt", imagePrompt.trim());
+
+    setIsAnalyzingImage(true);
+    setImageError("");
+    setImageResult(null);
+
+    try {
+      const response = await apiRequest<ImageUnderstandingResponse>(
+        "/api/v1/images",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      setImageResult(response);
+    } catch (error: unknown) {
+      setImageError(
+        error instanceof Error
+          ? error.message
+          : "Unable to analyze the image. Please try again.",
+      );
+    } finally {
+      setIsAnalyzingImage(false);
+    }
+  }, [isAnalyzingImage, selectedImage, imagePrompt]);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -503,7 +583,7 @@ function App() {
             </section>
           )}
 
-                    {activeWorkspace === "Documents" && (
+          {activeWorkspace === "Documents" && (
             <section className="document-panel" aria-label="Document tools">
               <div className="document-panel-heading">
                 <div>
@@ -655,6 +735,124 @@ function App() {
                       documentResult.summary ??
                       documentResult.answer ??
                       "The API returned no result text."}
+                  </pre>
+                </section>
+              )}
+            </section>
+          )}
+
+          {activeWorkspace === "Images" && (
+            <section className="image-panel" aria-label="Image analysis tools">
+              <div className="image-panel-heading">
+                <div>
+                  <h2>Understand your images</h2>
+                  <p>Upload an image and ask the vision model about it.</p>
+                </div>
+                <span className="chat-mode-badge">Image AI</span>
+              </div>
+
+              <label className="image-upload">
+                <Image size={28} />
+                <strong>
+                  {selectedImage ? selectedImage.name : "Choose an image"}
+                </strong>
+                <span>
+                  {selectedImage
+                    ? `${(selectedImage.size / 1024).toFixed(1)} KB`
+                    : "JPEG, PNG or WEBP · Maximum 5 MiB"}
+                </span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                  disabled={isAnalyzingImage}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    setSelectedImage(file);
+                    setImageResult(null);
+                    setImageError("");
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+
+              <form
+                className="image-prompt-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleImageAnalysis();
+                }}
+              >
+                <label htmlFor="image-prompt">
+                  What would you like to know about this image?
+                </label>
+                <textarea
+                  id="image-prompt"
+                  value={imagePrompt}
+                  onChange={(event) => setImagePrompt(event.target.value)}
+                  placeholder="Describe this image in detail."
+                  rows={3}
+                  maxLength={1000}
+                  disabled={isAnalyzingImage}
+                />
+                <div className="image-prompt-footer">
+                  <span>{imagePrompt.length}/1000 characters</span>
+                  <button
+                    type="submit"
+                    disabled={
+                      isAnalyzingImage ||
+                      !selectedImage ||
+                      !imagePrompt.trim()
+                    }
+                  >
+                    {isAnalyzingImage ? "Analyzing..." : "Analyze image"}
+                  </button>
+                </div>
+              </form>
+
+              {imageError && (
+                <p className="image-error" role="alert">
+                  {imageError}
+                </p>
+              )}
+
+              {isAnalyzingImage && (
+                <p className="image-loading" role="status" aria-live="polite">
+                  Analyzing your image. This may take a little while...
+                </p>
+              )}
+
+              {imageResult && (
+                <section
+                  className="image-result"
+                  aria-label="Image analysis result"
+                  aria-live="polite"
+                >
+                  <div className="image-result-heading">
+                    <div>
+                      <h3>Analysis result</h3>
+                      <p>
+                        {imageResult.filename} · {imageResult.image_format} ·{" "}
+                        {imageResult.width} × {imageResult.height}px
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard
+                          .writeText(imageResult.response)
+                          .catch(() => {
+                            setImageError(
+                              "Unable to copy the result. Please select and copy the text manually.",
+                            );
+                          });
+                      }}
+                    >
+                      Copy result
+                    </button>
+                  </div>
+
+                  <pre className="image-result-content">
+                    {imageResult.response}
                   </pre>
                 </section>
               )}
