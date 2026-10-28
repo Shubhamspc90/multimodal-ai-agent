@@ -1,4 +1,3 @@
-
 """API route for AI-generated text responses."""
 
 import logging
@@ -44,9 +43,7 @@ async def submit_text(
 ) -> AgentResponse:
     """Generate an AI response for a user's text message."""
     try:
-        return await service.process_text(
-            AgentRequest(message=request.message)
-        )
+        return await service.process_text(AgentRequest(message=request.message))
     except OllamaProviderError as exc:
         logger.warning("The text generation provider failed.")
         raise HTTPException(
