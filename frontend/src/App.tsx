@@ -75,6 +75,17 @@ const SUPPORTED_AUDIO_TYPES = [
   "audio/vnd.wave",
 ];
 
+type AudioMetadataResponse = {
+  status: "accepted";
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  audio_format: "WAV";
+  duration_seconds: number;
+  sample_rate_hz: number;
+  channels: number;
+};
+
 const workspaces: {
   name: Workspace;
   icon: typeof MessageSquare;
@@ -111,6 +122,9 @@ function App() {
   const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
   const [audioResult, setAudioResult] = useState<AudioTranscriptionResponse | null>(null);
   const [audioError, setAudioError] = useState("");
+  const [isPreviewingAudio, setIsPreviewingAudio] = useState(false);
+  const [audioMetadata, setAudioMetadata] = useState<AudioMetadataResponse | null>(null);
+  const [audioMetadataError, setAudioMetadataError] = useState("");
 
   const [apiStatus, setApiStatus] = useState<
     "checking" | "connected" | "disconnected"
@@ -383,6 +397,66 @@ function App() {
       setIsTranscribingAudio(false);
     }
   }, [selectedAudio, isTranscribingAudio]);
+
+  const handleAudioMetadataPreview = useCallback(async () => {
+    if (isPreviewingAudio || isTranscribingAudio) return;
+
+    if (!selectedAudio) {
+      setAudioMetadataError("Please select a WAV audio file first.");
+      return;
+    }
+
+    if (!selectedAudio.name.toLowerCase().endsWith(".wav")) {
+      setAudioMetadataError("Only WAV audio files are supported.");
+      return;
+    }
+
+    if (selectedAudio.size === 0) {
+      setAudioMetadataError("The selected audio file is empty.");
+      return;
+    }
+
+    if (selectedAudio.size > MAX_AUDIO_SIZE_BYTES) {
+      setAudioMetadataError("The audio file must be 10 MiB or smaller.");
+      return;
+    }
+
+    if (
+      selectedAudio.type &&
+      !SUPPORTED_AUDIO_TYPES.includes(selectedAudio.type.toLowerCase())
+    ) {
+      setAudioMetadataError("Please select a supported WAV audio file.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", selectedAudio);
+
+    setAudioMetadataError("");
+    setAudioError("");
+    setAudioMetadata(null);
+    setIsPreviewingAudio(true);
+
+    try {
+      const response = await apiRequest<AudioMetadataResponse>(
+        "/api/v1/audio",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      setAudioMetadata(response);
+    } catch (error: unknown) {
+      setAudioMetadataError(
+        error instanceof Error
+          ? error.message
+          : "Unable to preview the selected audio metadata.",
+      );
+    } finally {
+      setIsPreviewingAudio(false);
+    }
+  }, [selectedAudio, isPreviewingAudio, isTranscribingAudio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -965,9 +1039,13 @@ function App() {
                   disabled={isTranscribingAudio}
                   onChange={(event) => {
                     const file = event.target.files?.[0] ?? null;
+
                     setSelectedAudio(file);
                     setAudioResult(null);
                     setAudioError("");
+                    setAudioMetadata(null);
+                    setAudioMetadataError("");
+
                     event.target.value = "";
                   }}
                 />
@@ -977,12 +1055,72 @@ function App() {
                 <span>Supported format: WAV</span>
                 <button
                   type="button"
+                  onClick={() => void handleAudioMetadataPreview()}
+                  disabled={
+                    !selectedAudio ||
+                    isPreviewingAudio ||
+                    isTranscribingAudio
+                  }
+                >
+                  {isPreviewingAudio ? "Previewing metadata..." : "Preview audio metadata"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => void handleAudioTranscription()}
-                  disabled={isTranscribingAudio || !selectedAudio}
+                  disabled={
+                    isTranscribingAudio ||
+                    isPreviewingAudio ||
+                    !selectedAudio
+                  }
                 >
                   {isTranscribingAudio ? "Transcribing..." : "Transcribe audio"}
                 </button>
               </div>
+              {audioMetadataError && (
+                <p className="audio-error" role="alert">
+                  {audioMetadataError}
+                </p>
+              )}
+
+              {isPreviewingAudio && (
+                <p
+                  className="audio-loading"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Validating the WAV file and reading its metadata...
+                </p>
+              )}
+
+              {audioMetadata && (
+                <section
+                  className="audio-result"
+                  aria-label="Audio metadata preview"
+                  aria-live="polite"
+                >
+                  <div className="audio-result-heading">
+                    <div>
+                      <h3>Audio metadata</h3>
+                      <p>{audioMetadata.filename}</p>
+                    </div>
+                  </div>
+
+                  <div className="audio-metadata">
+                    <span>Format: {audioMetadata.audio_format}</span>
+                    <span>
+                      Size: {(audioMetadata.size_bytes / 1024).toFixed(1)} KB
+                    </span>
+                    <span>
+                      Duration: {audioMetadata.duration_seconds.toFixed(2)} seconds
+                    </span>
+                    <span>
+                      Sample rate: {audioMetadata.sample_rate_hz.toLocaleString()} Hz
+                    </span>
+                    <span>Channels: {audioMetadata.channels}</span>
+                    <span>MIME type: {audioMetadata.content_type}</span>
+                  </div>
+                </section>
+              )}
 
               {audioError && (
                 <p className="audio-error" role="alert">
@@ -1047,7 +1185,7 @@ function App() {
             <div>
               <strong>Workspace foundation is ready</strong>
               <p>
-               Explore the available workspaces to chat with the API, process
+                Explore the available workspaces to chat with the API, process
                 documents, analyze images, and transcribe WAV audio.
               </p>
             </div>
