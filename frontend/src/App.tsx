@@ -58,6 +58,23 @@ type ImageUnderstandingResponse = {
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_IMAGE_PROMPT = "Describe this image in detail.";
 
+type AudioTranscriptionResponse = {
+  status: "transcribed";
+  filename: string;
+  transcript: string;
+  language: string;
+  language_probability: number;
+  duration_seconds: number;
+};
+
+const MAX_AUDIO_SIZE_BYTES = 10 * 1024 * 1024;
+const SUPPORTED_AUDIO_TYPES = [
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/vnd.wave",
+];
+
 const workspaces: {
   name: Workspace;
   icon: typeof MessageSquare;
@@ -89,6 +106,11 @@ function App() {
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const [imageResult, setImageResult] = useState<ImageUnderstandingResponse | null>(null);
   const [imageError, setImageError] = useState("");
+
+  const [selectedAudio, setSelectedAudio] = useState<File | null>(null);
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+  const [audioResult, setAudioResult] = useState<AudioTranscriptionResponse | null>(null);
+  const [audioError, setAudioError] = useState("");
 
   const [apiStatus, setApiStatus] = useState<
     "checking" | "connected" | "disconnected"
@@ -303,6 +325,64 @@ function App() {
     }
   }, [isAnalyzingImage, selectedImage, imagePrompt]);
 
+  const handleAudioTranscription = useCallback(async () => {
+    if (isTranscribingAudio) return;
+
+    if (!selectedAudio) {
+      setAudioError("Please select a WAV audio file first.");
+      return;
+    }
+
+    if (!selectedAudio.name.toLowerCase().endsWith(".wav")) {
+      setAudioError("Only WAV audio files are supported.");
+      return;
+    }
+
+    if (selectedAudio.size === 0) {
+      setAudioError("The selected audio file is empty.");
+      return;
+    }
+
+    if (selectedAudio.size > MAX_AUDIO_SIZE_BYTES) {
+      setAudioError("The audio file must be 10 MiB or smaller.");
+      return;
+    }
+
+    if (
+      selectedAudio.type &&
+      !SUPPORTED_AUDIO_TYPES.includes(selectedAudio.type.toLowerCase())
+    ) {
+      setAudioError("Please select a supported WAV audio file.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", selectedAudio);
+
+    setAudioError("");
+    setAudioResult(null);
+    setIsTranscribingAudio(true);
+
+    try {
+      const response = await apiRequest<AudioTranscriptionResponse>(
+        "/api/v1/audio/transcribe",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      setAudioResult(response);
+    } catch (error: unknown) {
+      setAudioError(
+        error instanceof Error
+          ? error.message
+          : "Unable to transcribe the selected audio file.",
+      );
+    } finally {
+      setIsTranscribingAudio(false);
+    }
+  }, [selectedAudio, isTranscribingAudio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -859,14 +939,116 @@ function App() {
             </section>
           )}
 
+          {activeWorkspace === "Audio" && (
+            <section className="audio-panel" aria-label="Audio transcription tools">
+              <div className="audio-panel-heading">
+                <div>
+                  <h2>Transcribe your audio</h2>
+                  <p>Upload a WAV recording to convert speech into text.</p>
+                </div>
+                <span className="chat-mode-badge">Speech to Text</span>
+              </div>
+
+              <label className="audio-upload">
+                <AudioLines size={28} />
+                <strong>
+                  {selectedAudio ? selectedAudio.name : "Choose a WAV audio file"}
+                </strong>
+                <span>
+                  {selectedAudio
+                    ? `${(selectedAudio.size / 1024).toFixed(1)} KB`
+                    : "WAV audio · Maximum 10 MiB"}
+                </span>
+                <input
+                  type="file"
+                  accept="audio/wav,audio/x-wav,audio/wave,audio/vnd.wave,.wav"
+                  disabled={isTranscribingAudio}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    setSelectedAudio(file);
+                    setAudioResult(null);
+                    setAudioError("");
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+
+              <div className="audio-actions">
+                <span>Supported format: WAV</span>
+                <button
+                  type="button"
+                  onClick={() => void handleAudioTranscription()}
+                  disabled={isTranscribingAudio || !selectedAudio}
+                >
+                  {isTranscribingAudio ? "Transcribing..." : "Transcribe audio"}
+                </button>
+              </div>
+
+              {audioError && (
+                <p className="audio-error" role="alert">
+                  {audioError}
+                </p>
+              )}
+
+              {isTranscribingAudio && (
+                <p className="audio-loading" role="status" aria-live="polite">
+                  Transcribing your recording. This may take a little while...
+                </p>
+              )}
+
+              {audioResult && (
+                <section
+                  className="audio-result"
+                  aria-label="Audio transcription result"
+                  aria-live="polite"
+                >
+                  <div className="audio-result-heading">
+                    <div>
+                      <h3>Transcription result</h3>
+                      <p>{audioResult.filename}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard
+                          .writeText(audioResult.transcript)
+                          .catch(() => {
+                            setAudioError(
+                              "Unable to copy the transcript. Please select and copy the text manually.",
+                            );
+                          });
+                      }}
+                    >
+                      Copy transcript
+                    </button>
+                  </div>
+
+                  <div className="audio-metadata">
+                    <span>Language: {audioResult.language}</span>
+                    <span>
+                      Confidence:{" "}
+                      {(audioResult.language_probability * 100).toFixed(1)}%
+                    </span>
+                    <span>
+                      Duration: {audioResult.duration_seconds.toFixed(2)} seconds
+                    </span>
+                  </div>
+
+                  <pre className="audio-result-content">
+                    {audioResult.transcript || "No speech was detected."}
+                  </pre>
+                </section>
+              )}
+            </section>
+          )}
+
           <div className="notice">
             <div className="notice-icon"><Bot size={18} /></div>
             <div>
               <strong>Workspace foundation is ready</strong>
               <p>
-                This is the initial interface. API integration, document
-                workflows, image analysis, and audio transcription will be
-                added and validated incrementally.
+               Explore the available workspaces to chat with the API, process
+                documents, analyze images, and transcribe WAV audio.
               </p>
             </div>
           </div>
