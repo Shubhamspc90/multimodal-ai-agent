@@ -1,9 +1,8 @@
 """API route for AI-generated text responses."""
 
 import logging
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 
 from backend.app.core.config import settings
 from backend.app.schemas.agent import AgentRequest, AgentResponse
@@ -37,11 +36,10 @@ def get_agent_service() -> AgentService:
     response_model=AgentResponse,
     status_code=status.HTTP_200_OK,
 )
-async def submit_text(
-    request: TextInputRequest,
-    service: Annotated[AgentService, Depends(get_agent_service)],
-) -> AgentResponse:
+async def submit_text(request: TextInputRequest) -> AgentResponse:
     """Generate an AI response for a user's text message."""
+    service = get_agent_service()
+
     try:
         return await service.process_text(AgentRequest(message=request.message))
     except OllamaProviderError as exc:
@@ -51,7 +49,6 @@ async def submit_text(
             detail="The text generation provider is temporarily unavailable.",
         ) from exc
     except ValueError as exc:
-        # The agent service rejects empty or unusable model responses.
         logger.warning("Text generation returned an unusable response.")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
