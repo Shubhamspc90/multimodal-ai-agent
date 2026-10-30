@@ -151,7 +151,64 @@ button:focus-visible {
 .recent-label { margin-top: 35px; }
 .empty-history { padding: 15px 10px; color: #9298ad; }
 .empty-history p { font-size: 11px; line-height: 1.6; max-width: 170px; }
+.conversation-list {
+  display: grid;
+  gap: 5px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 0 2px;
+}
 
+.conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #69718b;
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.conversation-item:hover {
+  color: #453c85;
+  background: #f4f2ff;
+}
+
+.conversation-item-active {
+  color: #5e4cc3;
+  background: #f0edff;
+  border-color: #e0dbff;
+}
+
+.conversation-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.conversation-item:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.history-error {
+  margin: 8px 9px;
+  color: #b42318;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.new-chat:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
 .sidebar-bottom { margin-top: auto; }
 
 .status-card {
