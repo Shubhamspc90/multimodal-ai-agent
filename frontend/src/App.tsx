@@ -1,6 +1,20 @@
 
 import { useCallback, useEffect, useState } from "react";
-import { apiRequest, checkApiHealth } from "./lib/api"; import {
+import {
+  apiRequest,
+  checkApiHealth,
+  createConversation,
+  getConversation,
+  listConversations,
+  sendConversationMessage,
+} from "./lib/api";
+
+import type {
+  ConversationDetail,
+  ConversationSummary,
+} from "./lib/api";
+
+import {
   AudioLines,
   Bot,
   ChevronDown,
@@ -99,6 +113,21 @@ const workspaces: {
     { name: "Audio", icon: AudioLines, description: "Transcribe supported audio files." },
   ];
 
+const CHAT_CLIENT_ID_KEY = "multimodal-ai-agent-chat-client-id";
+
+function getOrCreateChatClientId(): string {
+  const existingId = window.localStorage.getItem(CHAT_CLIENT_ID_KEY);
+
+  if (existingId) {
+    return existingId;
+  }
+
+  const newId = window.crypto.randomUUID();
+  window.localStorage.setItem(CHAT_CLIENT_ID_KEY, newId);
+
+  return newId;
+}
+
 function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("Chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -107,6 +136,19 @@ function App() {
   const [messageDraft, setMessageDraft] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [chatError, setChatError] = useState("");
+
+  const [chatClientId] = useState<string>(() => getOrCreateChatClientId());
+
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(
+    null,
+  );
+
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false);
+  const [isCreatingConversation, setIsCreatingConversation] = useState(false);
+
+  const [historyError, setHistoryError] = useState("");
 
   const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
   const [documentQuestion, setDocumentQuestion] = useState("");
@@ -154,15 +196,99 @@ function App() {
     }
   }, []);
 
+  const refreshConversations = useCallback(async () => {
+    const result = await listConversations(chatClientId);
+    setConversations(result);
+    return result;
+  }, [chatClientId]);
+
+  const handleNewConversation = useCallback(async () => {
+    if (isCreatingConversation || isSending) return;
+
+    setActiveWorkspace("Chat");
+    setSidebarOpen(false);
+    setChatError("");
+    setHistoryError("");
+    setMessageDraft("");
+    setIsCreatingConversation(true);
+
+    try {
+      const conversation = await createConversation(chatClientId);
+
+      setConversations((previous) => [
+        conversation,
+        ...previous.filter((item) => item.id !== conversation.id),
+      ]);
+
+      setActiveConversationId(conversation.id);
+      setChatMessages([]);
+    } catch (error: unknown) {
+      setChatError(
+        error instanceof Error
+          ? error.message
+          : "Unable to create a new conversation.",
+      );
+    } finally {
+      setIsCreatingConversation(false);
+    }
+  }, [chatClientId, isCreatingConversation, isSending]);
+
+  const handleSelectConversation = useCallback(
+    async (conversationId: string) => {
+      if (isLoadingConversation || isSending) return;
+
+      setIsLoadingConversation(true);
+      setHistoryError("");
+      setChatError("");
+
+      try {
+        const conversation: ConversationDetail = await getConversation(
+          conversationId,
+          chatClientId,
+        );
+
+        setActiveConversationId(conversation.id);
+
+        setChatMessages(
+          conversation.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+          })),
+        );
+
+        setActiveWorkspace("Chat");
+        setSidebarOpen(false);
+      } catch (error: unknown) {
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load this conversation.",
+        );
+      } finally {
+        setIsLoadingConversation(false);
+      }
+    },
+    [chatClientId, isLoadingConversation, isSending],
+  );
+
   const handleSendMessage = useCallback(async () => {
     const message = messageDraft.trim();
 
-    if (!message || isSending) {
+    if (
+      !message ||
+      isSending ||
+      isLoadingHistory ||
+      isLoadingConversation ||
+      isCreatingConversation
+    ) {
       return;
     }
 
+    const optimisticId = Date.now();
+
     const userMessage: ChatMessage = {
-      id: Date.now(),
+      id: optimisticId,
       role: "user",
       content: message,
     };
@@ -170,33 +296,130 @@ function App() {
     setChatMessages((previous) => [...previous, userMessage]);
     setMessageDraft("");
     setChatError("");
+    setHistoryError("");
     setIsSending(true);
 
+    let conversationId = activeConversationId;
+
     try {
-      const response = await apiRequest<TextInputResponse>("/api/v1/text", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message }),
-      });
+      if (!conversationId) {
+        const conversation = await createConversation(chatClientId);
+
+        conversationId = conversation.id;
+        setActiveConversationId(conversation.id);
+
+        setConversations((previous) => [
+          conversation,
+          ...previous.filter((item) => item.id !== conversation.id),
+        ]);
+      }
+
+      const result = await sendConversationMessage(
+        conversationId,
+        chatClientId,
+        message,
+      );
 
       setChatMessages((previous) => [
-        ...previous,
+        ...previous.filter((item) => item.id !== optimisticId),
         {
-          id: Date.now() + 1,
+          id: result.user_message.id,
+          role: "user",
+          content: result.user_message.content,
+        },
+        {
+          id: result.assistant_message.id,
           role: "assistant",
-          content: response.response,
+          content: result.assistant_message.content,
         },
       ]);
+
+      try {
+        await refreshConversations();
+      } catch {
+        setHistoryError(
+          "Your message was saved, but the conversation list could not refresh.",
+        );
+      }
     } catch (error: unknown) {
-      setChatError(
-        error instanceof Error ? error.message : "Unable to send your message.",
-      );
+      if (!conversationId) {
+        // Keep the existing AI chat usable if PostgreSQL is unavailable
+        // before a new conversation can be created.
+        try {
+          const response = await apiRequest<TextInputResponse>(
+            "/api/v1/text",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message }),
+            },
+          );
+
+          setChatMessages((previous) => [
+            ...previous.filter((item) => item.id !== optimisticId),
+            userMessage,
+            {
+              id: Date.now() + 1,
+              role: "assistant",
+              content: response.response,
+            },
+          ]);
+
+          setHistoryError(
+            "Chat history is unavailable. This exchange was not saved.",
+          );
+        } catch (fallbackError: unknown) {
+          setChatMessages((previous) =>
+            previous.filter((item) => item.id !== optimisticId),
+          );
+
+          setChatError(
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : "Unable to send your message.",
+          );
+        }
+      } else {
+        // The backend saves the user message before calling the AI.
+        // Recover it when AI generation fails.
+        try {
+          const conversation = await getConversation(
+            conversationId,
+            chatClientId,
+          );
+
+          setChatMessages(
+            conversation.messages.map((item) => ({
+              id: item.id,
+              role: item.role,
+              content: item.content,
+            })),
+          );
+
+          await refreshConversations();
+        } catch {
+          // Preserve the currently displayed messages and original error.
+        }
+
+        setChatError(
+          error instanceof Error
+            ? error.message
+            : "Unable to complete your message.",
+        );
+      }
     } finally {
       setIsSending(false);
     }
-  }, [messageDraft, isSending]);
+  }, [
+    messageDraft,
+    isSending,
+    isLoadingHistory,
+    isLoadingConversation,
+    isCreatingConversation,
+    activeConversationId,
+    chatClientId,
+    refreshConversations,
+  ]);
 
   const handleDocumentAction = useCallback(
     async (action: DocumentAction) => {
@@ -491,6 +714,65 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreLatestConversation = async () => {
+      setIsLoadingHistory(true);
+      setHistoryError("");
+
+      try {
+        const savedConversations = await listConversations(chatClientId);
+
+        if (cancelled) return;
+
+        setConversations(savedConversations);
+
+        if (savedConversations.length === 0) {
+          setActiveConversationId(null);
+          setChatMessages([]);
+          return;
+        }
+
+        const latestConversation = await getConversation(
+          savedConversations[0].id,
+          chatClientId,
+        );
+
+        if (cancelled) return;
+
+        setActiveConversationId(latestConversation.id);
+
+        setChatMessages(
+          latestConversation.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+          })),
+        );
+      } catch (error: unknown) {
+        if (cancelled) return;
+
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : "Unable to restore conversation history.",
+        );
+      } finally {
+        if (!cancelled) {
+          setIsLoadingHistory(false);
+        }
+      }
+    };
+
+    void restoreLatestConversation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatClientId]);
+
   const active = workspaces.find((item) => item.name === activeWorkspace)!;
   const ActiveIcon = active.icon;
 
@@ -520,7 +802,16 @@ function App() {
           </button>
         </div>
 
-        <button className="new-chat" onClick={() => setActiveWorkspace("Chat")}>
+        <button
+          className="new-chat"
+          onClick={() => void handleNewConversation()}
+          disabled={
+            isCreatingConversation ||
+            isLoadingHistory ||
+            isLoadingConversation ||
+            isSending
+          }
+        >
           <Plus size={17} />
           <span>New conversation</span>
           <span className="shortcut">⌘ K</span>
@@ -545,10 +836,49 @@ function App() {
         </nav>
 
         <div className="nav-label recent-label">RECENT</div>
-        <div className="empty-history">
-          <MessageSquare size={17} />
-          <p>Your conversations will appear here.</p>
-        </div>
+
+        {isLoadingHistory && (
+          <div className="empty-history">
+            <p>Loading conversations...</p>
+          </div>
+        )}
+
+        {historyError && (
+          <p className="history-error" role="alert">
+            {historyError}
+          </p>
+        )}
+
+        {!isLoadingHistory && conversations.length === 0 && !historyError && (
+          <div className="empty-history">
+            <MessageSquare size={17} />
+            <p>Your conversations will appear here.</p>
+          </div>
+        )}
+
+        {conversations.length > 0 && (
+          <div className="conversation-list">
+            {conversations.map((conversation) => (
+              <button
+                type="button"
+                key={conversation.id}
+                className={`conversation-item ${activeConversationId === conversation.id
+                    ? "conversation-item-active"
+                    : ""
+                  }`}
+                aria-current={
+                  activeConversationId === conversation.id ? "true" : undefined
+                }
+                title={conversation.title}
+                disabled={isLoadingConversation || isSending}
+                onClick={() => void handleSelectConversation(conversation.id)}
+              >
+                <MessageSquare size={15} />
+                <span>{conversation.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="sidebar-bottom">
           <div className="status-card">
@@ -722,13 +1052,23 @@ function App() {
                   onChange={(event) => setMessageDraft(event.target.value)}
                   maxLength={10000}
                   rows={2}
-                  disabled={isSending}
+                  disabled={
+                    isSending ||
+                    isLoadingHistory ||
+                    isLoadingConversation ||
+                    isCreatingConversation
+                  }
                 />
 
                 <button
                   type="submit"
-                  disabled={isSending || !messageDraft.trim()}
-                >
+                  disabled={
+                    isSending ||
+                    isLoadingHistory ||
+                    isLoadingConversation ||
+                    isCreatingConversation ||
+                    !messageDraft.trim()
+                  }                >
                   {isSending ? "Sending..." : "Send message"}
                 </button>
               </form>
