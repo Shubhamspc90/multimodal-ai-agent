@@ -26,9 +26,7 @@ def storage() -> PostgresChatHistoryStorage:
 @pytest.fixture
 def database_mocks():
     """Mock the PostgreSQL connection and cursor."""
-    with patch(
-        "backend.app.services.chat_history.psycopg.connect"
-    ) as connect:
+    with patch("backend.app.services.chat_history.psycopg.connect") as connect:
         connection = connect.return_value.__enter__.return_value
         cursor = connection.cursor.return_value.__enter__.return_value
 
@@ -208,9 +206,7 @@ def test_storage_propagates_database_errors(
     database_mocks,
 ):
     connect, _, _ = database_mocks
-    connect.side_effect = psycopg.OperationalError(
-        "connection unavailable"
-    )
+    connect.side_effect = psycopg.OperationalError("connection unavailable")
 
     with pytest.raises(
         psycopg.OperationalError,

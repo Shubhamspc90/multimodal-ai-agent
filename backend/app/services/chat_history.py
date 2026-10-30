@@ -1,4 +1,3 @@
-
 """PostgreSQL storage for chat conversations and messages."""
 
 from collections.abc import Iterator
@@ -27,8 +26,7 @@ class PostgresChatHistoryStorage:
 
         if password is None:
             raise ValueError(
-                "POSTGRES_PASSWORD must be configured before "
-                "using chat history."
+                "POSTGRES_PASSWORD must be configured before using chat history."
             )
 
         with psycopg.connect(
@@ -49,9 +47,7 @@ class PostgresChatHistoryStorage:
             if self._schema_ready:
                 return
 
-            schema_path = Path(__file__).with_name(
-                "chat_history_schema.sql"
-            )
+            schema_path = Path(__file__).with_name("chat_history_schema.sql")
             schema_sql = schema_path.read_text(encoding="utf-8")
 
             with self._connection() as connection:
@@ -186,11 +182,7 @@ class PostgresChatHistoryStorage:
                 title = row[0]
 
                 if role == "user" and title == "New conversation":
-                    title = (
-                        content[:77] + "..."
-                        if len(content) > 80
-                        else content
-                    )
+                    title = content[:77] + "..." if len(content) > 80 else content
 
                 cursor.execute(
                     """

@@ -1,4 +1,3 @@
-
 """API tests for persistent chat conversations."""
 
 from datetime import UTC, datetime
@@ -128,9 +127,9 @@ def api_client():
     """Create an API client with isolated fake conversation storage."""
     storage = FakeChatHistoryStorage()
 
-    app.dependency_overrides[
-        conversations_route.get_chat_history_storage
-    ] = lambda: storage
+    app.dependency_overrides[conversations_route.get_chat_history_storage] = lambda: (
+        storage
+    )
 
     try:
         with TestClient(app) as client:
@@ -175,10 +174,7 @@ def test_list_conversations_returns_only_client_conversations(api_client):
 
     assert response.status_code == 200
     assert len(response.json()) == 2
-    assert all(
-        item["client_id"] == str(client_id)
-        for item in response.json()
-    )
+    assert all(item["client_id"] == str(client_id) for item in response.json())
 
 
 def test_load_conversation_returns_saved_messages(api_client):
@@ -288,10 +284,13 @@ def test_send_conversation_message_rejects_empty_message(api_client):
     )
 
     assert response.status_code == 422
-    assert storage.get_conversation(
-        conversation["id"],
-        client_id,
-    )["messages"] == []
+    assert (
+        storage.get_conversation(
+            conversation["id"],
+            client_id,
+        )["messages"]
+        == []
+    )
 
 
 def test_send_message_returns_404_for_another_client(
