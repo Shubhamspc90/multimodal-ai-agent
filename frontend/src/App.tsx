@@ -1,5 +1,5 @@
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   apiRequest,
   checkApiHealth,
@@ -22,10 +22,12 @@ import {
   Image,
   Menu,
   MessageSquare,
+  Mic,
   Plus,
   Search,
   Settings2,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import "./App.css";
@@ -102,6 +104,98 @@ type AudioMetadataResponse = {
   channels: number;
 };
 
+const VOICE_SAMPLE_RATE = 16_000;
+
+function encodePcmChunksToWav(
+  chunks: Float32Array[],
+  inputSampleRate: number,
+): File {
+  if (!chunks.length || inputSampleRate <= 0) {
+    throw new Error("No valid audio samples were captured.");
+  }
+
+  const totalSamples = chunks.reduce(
+    (total, chunk) => total + chunk.length,
+    0,
+  );
+
+  if (totalSamples === 0) {
+    throw new Error("The voice recording is empty.");
+  }
+
+  const inputSamples = new Float32Array(totalSamples);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    inputSamples.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const outputSampleCount = Math.floor(
+    (totalSamples * VOICE_SAMPLE_RATE) / inputSampleRate,
+  );
+
+  const dataSize = outputSampleCount * 2;
+
+  if (dataSize + 44 > MAX_AUDIO_SIZE_BYTES) {
+    throw new Error("The voice recording exceeds the 10 MiB limit.");
+  }
+
+  if (outputSampleCount <= 0) {
+    throw new Error("No valid audio samples were captured.");
+  }
+
+  const wavBuffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(wavBuffer);
+
+  const writeText = (position: number, value: string) => {
+    for (let i = 0; i < value.length; i += 1) {
+      view.setUint8(position + i, value.charCodeAt(i));
+    }
+  };
+
+  writeText(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, VOICE_SAMPLE_RATE, true);
+  view.setUint32(28, VOICE_SAMPLE_RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  const ratio = inputSampleRate / VOICE_SAMPLE_RATE;
+
+  for (let i = 0; i < outputSampleCount; i += 1) {
+    const position = i * ratio;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, totalSamples - 1);
+    const fraction = position - left;
+
+    const sample =
+      inputSamples[left] * (1 - fraction) +
+      inputSamples[right] * fraction;
+
+    const clamped = Math.max(-1, Math.min(1, sample));
+
+    view.setInt16(
+      44 + i * 2,
+      clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff,
+      true,
+    );
+  }
+
+  return new File(
+    [wavBuffer],
+    "voice-message.wav",
+    { type: "audio/wav" },
+  );
+}
+
 const workspaces: {
   name: Workspace;
   icon: typeof MessageSquare;
@@ -169,6 +263,23 @@ function App() {
   const [isPreviewingAudio, setIsPreviewingAudio] = useState(false);
   const [audioMetadata, setAudioMetadata] = useState<AudioMetadataResponse | null>(null);
   const [audioMetadataError, setAudioMetadataError] = useState("");
+
+  const [voiceRecordingStatus, setVoiceRecordingStatus] = useState<
+    "idle" | "recording" | "processing"
+  >("idle");
+
+  const [voiceError, setVoiceError] = useState("");
+  const [voiceNotice, setVoiceNotice] = useState("");
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const audioProcessorRef = useRef<AudioWorkletNode | null>(null);
+  const silentGainRef = useRef<GainNode | null>(null);
+
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedChunksRef = useRef<Float32Array[]>([]);
+
+  const flushResolveRef = useRef<(() => void) | null>(null);
 
   const [apiStatus, setApiStatus] = useState<
     "checking" | "connected" | "disconnected"
@@ -280,7 +391,8 @@ function App() {
       isSending ||
       isLoadingHistory ||
       isLoadingConversation ||
-      isCreatingConversation
+      isCreatingConversation ||
+      voiceRecordingStatus !== "idle"
     ) {
       return;
     }
@@ -419,6 +531,8 @@ function App() {
     activeConversationId,
     chatClientId,
     refreshConversations,
+    voiceRecordingStatus,
+
   ]);
 
   const handleDocumentAction = useCallback(
@@ -623,6 +737,274 @@ function App() {
     }
   }, [selectedAudio, isTranscribingAudio]);
 
+  const transcribeVoiceRecording = useCallback(async (wavFile: File) => {
+    setVoiceRecordingStatus("processing");
+    setVoiceError("");
+    setVoiceNotice("");
+
+    try {
+      if (!wavFile.size || wavFile.size > MAX_AUDIO_SIZE_BYTES) {
+        throw new Error("The WAV recording must be between 1 byte and 10 MiB.");
+      }
+
+      const formData = new FormData();
+      formData.append("file", wavFile);
+
+      const response = await apiRequest<AudioTranscriptionResponse>(
+        "/api/v1/audio/transcribe",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+
+      const transcript = response.transcript.trim();
+
+      if (!transcript) {
+        throw new Error("No speech was detected. Please try again.");
+      }
+
+      setMessageDraft(transcript);
+
+      setVoiceNotice(
+        `Transcript ready · ${response.language} · ` +
+        `${(response.language_probability * 100).toFixed(1)}% confidence. ` +
+        "Review and edit before sending.",
+      );
+    } catch (error: unknown) {
+      setVoiceError(
+        error instanceof Error
+          ? error.message
+          : "Unable to transcribe the voice recording.",
+      );
+    } finally {
+      setVoiceRecordingStatus("idle");
+    }
+  }, []);
+
+  const releaseMicrophone = useCallback(() => {
+    const processor = audioProcessorRef.current;
+    const source = audioSourceRef.current;
+    const gain = silentGainRef.current;
+    const context = audioContextRef.current;
+
+    if (processor) {
+      processor.port.onmessage = null;
+      processor.disconnect();
+    }
+
+    source?.disconnect();
+    gain?.disconnect();
+
+    mediaStreamRef.current?.getTracks().forEach((track) => {
+      track.stop();
+    });
+
+    mediaStreamRef.current = null;
+    audioProcessorRef.current = null;
+    audioSourceRef.current = null;
+    silentGainRef.current = null;
+    audioContextRef.current = null;
+
+    if (context && context.state !== "closed") {
+      void context.close().catch(() => {
+        // Ignore cleanup failures.
+      });
+    }
+  }, []);
+
+  const handleStartVoiceRecording = useCallback(async () => {
+    if (
+      voiceRecordingStatus !== "idle" ||
+      isSending ||
+      isLoadingHistory ||
+      isLoadingConversation ||
+      isCreatingConversation
+    ) {
+      return;
+    }
+
+    setVoiceError("");
+    setVoiceNotice("");
+
+    if (
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof AudioWorkletNode === "undefined"
+    ) {
+      setVoiceError("Voice recording is not supported by this browser.");
+      return;
+    }
+
+    if (!window.isSecureContext) {
+      setVoiceError(
+        "Microphone access requires HTTPS or secure localhost.",
+      );
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: { ideal: 1 },
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      mediaStreamRef.current = stream;
+      recordedChunksRef.current = [];
+
+      const context = new AudioContext();
+
+      await context.audioWorklet.addModule(
+        "/pcm-recorder-processor.js",
+      );
+
+      await context.resume();
+
+      audioContextRef.current = context;
+
+      await context.audioWorklet.addModule(
+        "/pcm-recorder-processor.js",
+      );
+
+      await context.resume();
+
+      const source = context.createMediaStreamSource(stream);
+
+      const processor = new AudioWorkletNode(
+        context,
+        "pcm-recorder-processor",
+        {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          channelCount: 1,
+          channelCountMode: "explicit",
+          channelInterpretation: "speakers",
+          outputChannelCount: [1],
+        },
+      );
+
+      const gain = context.createGain();
+      gain.gain.value = 0;
+
+      processor.port.onmessage = (event) => {
+        const data: unknown = event.data;
+
+        if (data instanceof Float32Array) {
+          recordedChunksRef.current.push(data);
+          return;
+        }
+
+        if (
+          typeof data === "object" &&
+          data !== null &&
+          "type" in data &&
+          data.type === "flushed"
+        ) {
+          flushResolveRef.current?.();
+          flushResolveRef.current = null;
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(gain);
+      gain.connect(context.destination);
+
+      audioSourceRef.current = source;
+      audioProcessorRef.current = processor;
+      silentGainRef.current = gain;
+
+      setVoiceRecordingStatus("recording");
+    } catch (error: unknown) {
+      releaseMicrophone();
+
+      setVoiceRecordingStatus("idle");
+
+      setVoiceError(
+        error instanceof Error
+          ? error.message
+          : "Unable to start microphone recording.",
+      );
+    }
+  }, [
+    voiceRecordingStatus,
+    isSending,
+    isLoadingHistory,
+    isLoadingConversation,
+    isCreatingConversation,
+    releaseMicrophone,
+  ]);
+
+  const handleStopVoiceRecording = useCallback(async () => {
+    const processor = audioProcessorRef.current;
+    const context = audioContextRef.current;
+
+    if (!processor || !context) {
+      return;
+    }
+
+    setVoiceRecordingStatus("processing");
+
+    try {
+      await new Promise<void>((resolve) => {
+        flushResolveRef.current = resolve;
+        processor.port.postMessage({ type: "flush" });
+      });
+
+      const chunks = recordedChunksRef.current;
+      recordedChunksRef.current = [];
+
+      const inputSampleRate = context.sampleRate;
+
+      releaseMicrophone();
+
+      const wavFile = encodePcmChunksToWav(
+        chunks,
+        inputSampleRate,
+      );
+
+      await transcribeVoiceRecording(wavFile);
+    } catch (error: unknown) {
+      releaseMicrophone();
+      setVoiceRecordingStatus("idle");
+
+      setVoiceError(
+        error instanceof Error
+          ? error.message
+          : "Unable to process the voice recording.",
+      );
+    }
+  }, [releaseMicrophone, transcribeVoiceRecording]);
+
+  const handleCancelVoiceRecording = useCallback(() => {
+    recordedChunksRef.current = [];
+
+    flushResolveRef.current?.();
+    flushResolveRef.current = null;
+
+    releaseMicrophone();
+
+    setVoiceRecordingStatus("idle");
+    setVoiceError("");
+    setVoiceNotice("");
+  }, [releaseMicrophone]);
+
+  const handleWorkspaceChange = useCallback(
+    (workspace: Workspace) => {
+      if (
+        workspace !== "Chat" &&
+        voiceRecordingStatus === "recording"
+      ) {
+        handleCancelVoiceRecording();
+      }
+
+      setActiveWorkspace(workspace);
+    },
+    [voiceRecordingStatus, handleCancelVoiceRecording],
+  );
+
   const handleAudioMetadataPreview = useCallback(async () => {
     if (isPreviewingAudio || isTranscribingAudio) return;
 
@@ -772,6 +1154,16 @@ function App() {
       cancelled = true;
     };
   }, [chatClientId]);
+  useEffect(() => {
+    return () => {
+      recordedChunksRef.current = [];
+
+      flushResolveRef.current?.();
+      flushResolveRef.current = null;
+
+      releaseMicrophone();
+    };
+  }, [releaseMicrophone]);
 
   const active = workspaces.find((item) => item.name === activeWorkspace)!;
   const ActiveIcon = active.icon;
@@ -824,7 +1216,7 @@ function App() {
               key={name}
               className={`nav-item ${activeWorkspace === name ? "active" : ""}`}
               onClick={() => {
-                setActiveWorkspace(name);
+                handleWorkspaceChange(name);
                 setSidebarOpen(false);
               }}
             >
@@ -863,8 +1255,8 @@ function App() {
                 type="button"
                 key={conversation.id}
                 className={`conversation-item ${activeConversationId === conversation.id
-                    ? "conversation-item-active"
-                    : ""
+                  ? "conversation-item-active"
+                  : ""
                   }`}
                 aria-current={
                   activeConversationId === conversation.id ? "true" : undefined
@@ -983,7 +1375,7 @@ function App() {
               <button
                 key={name}
                 className={`feature-card ${activeWorkspace === name ? "feature-selected" : ""}`}
-                onClick={() => setActiveWorkspace(name)}
+                onClick={() => handleWorkspaceChange(name)}
               >
                 <div className={`feature-icon feature-${name.toLowerCase()}`}>
                   <Icon size={20} strokeWidth={1.8} />
@@ -1038,6 +1430,30 @@ function App() {
                 </p>
               )}
 
+              {voiceError && (
+                <p className="voice-error" role="alert">
+                  {voiceError}
+                </p>
+              )}
+
+              {voiceRecordingStatus === "recording" && (
+                <p className="voice-recording-status" role="status" aria-live="polite">
+                  Recording your voice... Press Stop when finished.
+                </p>
+              )}
+
+              {voiceRecordingStatus === "processing" && (
+                <p className="voice-recording-status" role="status" aria-live="polite">
+                  Converting audio and transcribing with Whisper...
+                </p>
+              )}
+
+              {voiceNotice && voiceRecordingStatus === "idle" && (
+                <p className="voice-notice" role="status" aria-live="polite">
+                  {voiceNotice}
+                </p>
+              )}
+
               <form
                 className="chat-composer"
                 onSubmit={(event) => {
@@ -1056,9 +1472,51 @@ function App() {
                     isSending ||
                     isLoadingHistory ||
                     isLoadingConversation ||
-                    isCreatingConversation
+                    isCreatingConversation ||
+                    voiceRecordingStatus !== "idle"
                   }
                 />
+
+                {voiceRecordingStatus === "recording" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="voice-control-button voice-control-recording"
+                      onClick={handleStopVoiceRecording}
+                      aria-label="Stop voice recording"
+                      title="Stop recording"
+                    >
+                      <Square size={17} fill="currentColor" />
+                    </button>
+
+                    <button
+                      type="button"
+                      className="voice-control-button"
+                      onClick={handleCancelVoiceRecording}
+                      aria-label="Cancel voice recording"
+                      title="Cancel recording"
+                    >
+                      <X size={18} />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="voice-control-button"
+                    onClick={() => void handleStartVoiceRecording()}
+                    disabled={
+                      voiceRecordingStatus === "processing" ||
+                      isSending ||
+                      isLoadingHistory ||
+                      isLoadingConversation ||
+                      isCreatingConversation
+                    }
+                    aria-label="Record voice message"
+                    title="Record voice message"
+                  >
+                    <Mic size={18} />
+                  </button>
+                )}
 
                 <button
                   type="submit"
@@ -1067,8 +1525,9 @@ function App() {
                     isLoadingHistory ||
                     isLoadingConversation ||
                     isCreatingConversation ||
+                    voiceRecordingStatus !== "idle" ||
                     !messageDraft.trim()
-                  }                >
+                  }               >
                   {isSending ? "Sending..." : "Send message"}
                 </button>
               </form>
