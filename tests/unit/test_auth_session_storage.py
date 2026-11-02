@@ -41,6 +41,7 @@ def valid_session_data():
     return {
         "user_id": uuid4(),
         "token_hash": "a" * 64,
+        "csrf_token_hash": "b" * 64,
         "expires_at": datetime.now(UTC) + timedelta(hours=1),
     }
 
@@ -77,6 +78,7 @@ def test_create_session_stores_token_hash(
     assert params[0] == session_id
     assert params[1] == valid_session_data["user_id"]
     assert params[2] == valid_session_data["token_hash"]
+    assert params[3] == valid_session_data["csrf_token_hash"]
 
 
 def test_get_active_session_returns_user(storage, database_mocks):
@@ -94,6 +96,7 @@ def test_get_active_session_returns_user(storage, database_mocks):
         "shubham@example.com",
         timestamp,
         expires_at,
+        "b" * 64,
     )
 
     result = storage.get_active_session("a" * 64)
@@ -102,6 +105,7 @@ def test_get_active_session_returns_user(storage, database_mocks):
     assert result["session_id"] == session_id
     assert result["user"]["id"] == user_id
     assert result["user"]["email"] == "shubham@example.com"
+    assert result["csrf_token_hash"] == "b" * 64
     assert "token_hash" not in result
 
     query, params = cursor.execute.call_args.args
@@ -169,6 +173,7 @@ def test_create_session_rejects_invalid_token_hash(
         storage.create_session(
             user_id=valid_session_data["user_id"],
             token_hash=invalid_hash,
+            csrf_token_hash=valid_session_data["csrf_token_hash"],
             expires_at=valid_session_data["expires_at"],
         )
 
@@ -186,6 +191,7 @@ def test_create_session_rejects_naive_expiry(
         storage.create_session(
             user_id=valid_session_data["user_id"],
             token_hash=valid_session_data["token_hash"],
+            csrf_token_hash=valid_session_data["csrf_token_hash"],
             expires_at=datetime.now(),
         )
 
@@ -203,6 +209,7 @@ def test_create_session_rejects_expired_timestamp(
         storage.create_session(
             user_id=valid_session_data["user_id"],
             token_hash=valid_session_data["token_hash"],
+            csrf_token_hash=valid_session_data["csrf_token_hash"],
             expires_at=datetime.now(UTC) - timedelta(minutes=1),
         )
 
@@ -264,4 +271,26 @@ def test_schema_is_created_only_once(database_mocks):
 
     assert storage._schema_ready is True
     connect.assert_called_once()
-    assert cursor.execute.call_count == 2
+    assert cursor.execute.call_count == 4
+
+
+@pytest.mark.parametrize(
+    "invalid_hash", ["", "invalid-hash", "A" * 64, "a" * 63, "a" * 65]
+)
+def test_create_session_rejects_invalid_csrf_hash(
+    storage,
+    database_mocks,
+    valid_session_data,
+    invalid_hash,
+):
+    connect, _, _ = database_mocks
+
+    with pytest.raises(ValueError, match="Invalid session token hash"):
+        storage.create_session(
+            user_id=valid_session_data["user_id"],
+            token_hash=valid_session_data["token_hash"],
+            csrf_token_hash=invalid_hash,
+            expires_at=valid_session_data["expires_at"],
+        )
+
+    connect.assert_not_called()

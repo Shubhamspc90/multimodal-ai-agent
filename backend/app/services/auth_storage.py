@@ -62,6 +62,10 @@ class PostgresUserStorage:
 
             self._schema_ready = True
 
+    def ensure_schema(self) -> None:
+        """Ensure the user table exists for dependent storage services."""
+        self._ensure_schema()
+
     @staticmethod
     def _normalize_email(email: str) -> str:
         """Normalize an email address for consistent account lookup."""

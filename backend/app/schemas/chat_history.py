@@ -13,6 +13,14 @@ class ConversationCreateRequest(BaseModel):
     client_id: UUID
 
 
+class LegacyConversationClaimRequest(BaseModel):
+    """Request to claim unowned conversations from the current browser."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: UUID
+
+
 class ConversationSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

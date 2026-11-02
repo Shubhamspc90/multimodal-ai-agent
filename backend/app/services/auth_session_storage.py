@@ -44,7 +44,7 @@ class PostgresAuthSessionStorage:
             yield connection
 
     def _ensure_schema(self) -> None:
-        """Create session tables and indexes once per storage instance."""
+        """Create or migrate session tables and indexes once per instance."""
         if self._schema_ready:
             return
 
@@ -65,7 +65,7 @@ class PostgresAuthSessionStorage:
 
     @staticmethod
     def _validate_token_hash(token_hash: str) -> str:
-        """Validate the SHA-256 hexadecimal session-token hash."""
+        """Validate a SHA-256 hexadecimal token hash."""
         if not isinstance(token_hash, str) or not TOKEN_HASH_PATTERN.fullmatch(
             token_hash
         ):
@@ -77,10 +77,12 @@ class PostgresAuthSessionStorage:
         self,
         user_id: UUID,
         token_hash: str,
+        csrf_token_hash: str,
         expires_at: datetime,
     ) -> dict:
-        """Create a session using a hashed token."""
+        """Create a session using hashed session and CSRF tokens."""
         token_hash = self._validate_token_hash(token_hash)
+        csrf_token_hash = self._validate_token_hash(csrf_token_hash)
 
         if expires_at.tzinfo is None or expires_at.utcoffset() is None:
             raise ValueError("Session expiry must include a timezone.")
@@ -97,9 +99,10 @@ class PostgresAuthSessionStorage:
                 id,
                 user_id,
                 token_hash,
+                csrf_token_hash,
                 expires_at
             )
-            VALUES (%s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id, user_id, created_at, expires_at
         """
 
@@ -107,7 +110,13 @@ class PostgresAuthSessionStorage:
             with connection.cursor() as cursor:
                 cursor.execute(
                     query,
-                    (session_id, user_id, token_hash, expires_at),
+                    (
+                        session_id,
+                        user_id,
+                        token_hash,
+                        csrf_token_hash,
+                        expires_at,
+                    ),
                 )
                 row = cursor.fetchone()
 
@@ -122,7 +131,7 @@ class PostgresAuthSessionStorage:
         }
 
     def get_active_session(self, token_hash: str) -> dict | None:
-        """Retrieve an active session and its associated user."""
+        """Retrieve an active session, its CSRF hash and associated user."""
         token_hash = self._validate_token_hash(token_hash)
         self._ensure_schema()
 
@@ -133,12 +142,14 @@ class PostgresAuthSessionStorage:
                 u.name,
                 u.email,
                 u.created_at,
-                s.expires_at
+                s.expires_at,
+                s.csrf_token_hash
             FROM auth_sessions AS s
             JOIN users AS u ON u.id = s.user_id
             WHERE s.token_hash = %s
               AND s.revoked_at IS NULL
               AND s.expires_at > CURRENT_TIMESTAMP
+              AND s.csrf_token_hash IS NOT NULL
         """
 
         with self._connection() as connection:
@@ -158,10 +169,11 @@ class PostgresAuthSessionStorage:
                 "created_at": row[4],
             },
             "expires_at": row[5],
+            "csrf_token_hash": row[6],
         }
 
     def revoke_session(self, token_hash: str) -> bool:
-        """Revoke a session using its hashed token."""
+        """Revoke a session using its hashed session token."""
         token_hash = self._validate_token_hash(token_hash)
         self._ensure_schema()
 

@@ -1,10 +1,20 @@
+
 CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY,
     client_id UUID NOT NULL,
+    user_id UUID REFERENCES users(id),
     title TEXT NOT NULL DEFAULT 'New conversation',
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Safely add ownership to existing installations.
+ALTER TABLE conversations
+    ADD COLUMN IF NOT EXISTS user_id UUID
+    REFERENCES users(id);
+
+CREATE INDEX IF NOT EXISTS ix_conversations_user_updated
+    ON conversations (user_id, updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS ix_conversations_client_updated
     ON conversations (client_id, updated_at DESC);

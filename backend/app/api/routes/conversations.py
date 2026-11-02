@@ -6,8 +6,9 @@ from typing import Annotated
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from backend.app.api.dependencies import CsrfProtection, CurrentUser
 from backend.app.api.routes.text import get_agent_service
 from backend.app.schemas.agent import AgentRequest
 from backend.app.schemas.chat_history import (
@@ -16,6 +17,7 @@ from backend.app.schemas.chat_history import (
     ConversationCreateRequest,
     ConversationDetail,
     ConversationSummary,
+    LegacyConversationClaimRequest,
 )
 from backend.app.services.agent_service import AgentService
 from backend.app.services.chat_history import PostgresChatHistoryStorage
@@ -33,12 +35,12 @@ def get_chat_history_storage() -> PostgresChatHistoryStorage:
 
 
 def _database_unavailable(exc: Exception) -> HTTPException:
+    """Return a safe database availability error."""
     logger.exception("Chat history database operation failed.")
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Chat history storage is temporarily unavailable.",
     )
-    raise _database_unavailable(exc) from exc
 
 
 @router.post(
@@ -48,50 +50,74 @@ def _database_unavailable(exc: Exception) -> HTTPException:
 )
 def create_conversation(
     request: ConversationCreateRequest,
+    current_user: CurrentUser,
+    csrf_protection: CsrfProtection,
     storage: Annotated[
         PostgresChatHistoryStorage,
         Depends(get_chat_history_storage),
     ],
 ) -> dict:
-    """Create an empty conversation."""
+    """Create a conversation owned by the authenticated user."""
     try:
-        return storage.create_conversation(request.client_id)
+        return storage.create_conversation(
+            client_id=request.client_id,
+            user_id=current_user["id"],
+        )
     except (psycopg.Error, ValueError) as exc:
         raise _database_unavailable(exc) from exc
 
 
 @router.get("", response_model=list[ConversationSummary])
 def list_conversations(
-    client_id: Annotated[UUID, Query()],
+    current_user: CurrentUser,
     storage: Annotated[
         PostgresChatHistoryStorage,
         Depends(get_chat_history_storage),
     ],
 ) -> list[dict]:
-    """List conversations belonging to the supplied client."""
+    """List conversations belonging to the authenticated user."""
     try:
-        return storage.list_conversations(client_id)
+        return storage.list_conversations(user_id=current_user["id"])
     except (psycopg.Error, ValueError) as exc:
         raise _database_unavailable(exc) from exc
 
 
-@router.get(
-    "/{conversation_id}",
-    response_model=ConversationDetail,
-)
-def load_conversation(
-    conversation_id: UUID,
-    client_id: Annotated[UUID, Query()],
+@router.post("/claim-legacy")
+def claim_legacy_conversations(
+    request: LegacyConversationClaimRequest,
+    current_user: CurrentUser,
+    csrf_protection: CsrfProtection,
     storage: Annotated[
         PostgresChatHistoryStorage,
         Depends(get_chat_history_storage),
     ],
 ) -> dict:
-    """Load a conversation and its messages."""
+    """Claim unowned legacy conversations for the authenticated user."""
+    try:
+        linked_count = storage.link_legacy_conversations(
+            client_id=request.client_id,
+            user_id=current_user["id"],
+        )
+    except (psycopg.Error, ValueError) as exc:
+        raise _database_unavailable(exc) from exc
+
+    return {"linked_conversations": linked_count}
+
+
+@router.get("/{conversation_id}", response_model=ConversationDetail)
+def load_conversation(
+    conversation_id: UUID,
+    current_user: CurrentUser,
+    storage: Annotated[
+        PostgresChatHistoryStorage,
+        Depends(get_chat_history_storage),
+    ],
+) -> dict:
+    """Load a conversation owned by the authenticated user."""
     try:
         conversation = storage.get_conversation(
-            conversation_id,
-            client_id,
+            conversation_id=conversation_id,
+            user_id=current_user["id"],
         )
     except (psycopg.Error, ValueError) as exc:
         raise _database_unavailable(exc) from exc
@@ -112,18 +138,23 @@ def load_conversation(
 async def send_conversation_message(
     conversation_id: UUID,
     request: ChatMessageCreateRequest,
+    current_user: CurrentUser,
+    csrf_protection: CsrfProtection,
     storage: Annotated[
         PostgresChatHistoryStorage,
         Depends(get_chat_history_storage),
     ],
 ) -> dict:
     """Save a user message, generate an AI response, and save it."""
+    user_id = current_user["id"]
+
     try:
         user_message = storage.append_message(
             conversation_id=conversation_id,
-            client_id=request.client_id,
+            client_id=None,
             role="user",
             content=request.message,
+            user_id=user_id,
         )
     except (psycopg.Error, ValueError) as exc:
         raise _database_unavailable(exc) from exc
@@ -140,7 +171,7 @@ async def send_conversation_message(
             AgentRequest(message=request.message)
         )
     except HTTPException:
-        # The user message remains saved so it can be recovered.
+        # Preserve the saved user message so it can be recovered.
         raise
     except OllamaProviderError as exc:
         logger.warning("The text generation provider failed.")
@@ -158,9 +189,10 @@ async def send_conversation_message(
     try:
         assistant_message = storage.append_message(
             conversation_id=conversation_id,
-            client_id=request.client_id,
+            client_id=None,
             role="assistant",
             content=agent_response.response,
+            user_id=user_id,
         )
     except (psycopg.Error, ValueError) as exc:
         raise _database_unavailable(exc) from exc
