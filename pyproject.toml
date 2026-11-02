@@ -12,6 +12,7 @@ dependencies = [
     "sentence-transformers>=6.2.0,<7.0.0",
     "pgvector>=0.3.6,<1.0.0",
     "psycopg[binary]>=3.2,<4.0",
+    "argon2-cffi>=23.1,<26",
 ]
 
 [dependency-groups]
