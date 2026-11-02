@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from backend.app.api.routes.audio import router as audio_router
+from backend.app.api.routes.auth import router as auth_router
 from backend.app.api.routes.conversations import (
     router as conversations_router,
 )
@@ -36,3 +37,4 @@ app.include_router(image_router, prefix="/api/v1")
 app.include_router(audio_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")

@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import psycopg
 
 from backend.app.core.config import Settings, settings
+from backend.app.services.auth_storage import PostgresUserStorage
 
 
 class PostgresChatHistoryStorage:
@@ -16,6 +17,7 @@ class PostgresChatHistoryStorage:
 
     def __init__(self, config: Settings | None = None) -> None:
         self._config = config or settings
+        self._user_storage = PostgresUserStorage(self._config)
         self._schema_ready = False
         self._schema_lock = Lock()
 
@@ -47,6 +49,7 @@ class PostgresChatHistoryStorage:
             if self._schema_ready:
                 return
 
+            self._user_storage.ensure_schema()
             schema_path = Path(__file__).with_name("chat_history_schema.sql")
             schema_sql = schema_path.read_text(encoding="utf-8")
 
@@ -61,38 +64,55 @@ class PostgresChatHistoryStorage:
     def create_conversation(
         self,
         client_id: UUID,
+        user_id: UUID | None = None,
     ) -> dict:
-        """Create an empty conversation for a browser client."""
+        """Create a conversation for a browser client or authenticated user."""
         self._ensure_schema()
         conversation_id = uuid4()
 
         query = """
-            INSERT INTO conversations (id, client_id)
-            VALUES (%s, %s)
+            INSERT INTO conversations (id, client_id, user_id)
+            VALUES (%s, %s, %s)
             RETURNING id, client_id, title, created_at, updated_at
         """
 
         with self._connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(query, (conversation_id, client_id))
+                cursor.execute(query, (conversation_id, client_id, user_id))
                 row = cursor.fetchone()
 
         return self._conversation_dict(row)
 
-    def list_conversations(self, client_id: UUID) -> list[dict]:
-        """List conversations belonging to one browser client."""
+    def list_conversations(
+        self,
+        client_id: UUID | None = None,
+        user_id: UUID | None = None,
+    ) -> list[dict]:
+        """List conversations belonging to the authenticated user or legacy client."""
         self._ensure_schema()
 
-        query = """
-            SELECT id, client_id, title, created_at, updated_at
-            FROM conversations
-            WHERE client_id = %s
-            ORDER BY updated_at DESC, id DESC
-        """
+        if user_id is not None:
+            query = """
+                SELECT id, client_id, title, created_at, updated_at
+                FROM conversations
+                WHERE user_id = %s
+                ORDER BY updated_at DESC, id DESC
+            """
+            params = (user_id,)
+        elif client_id is not None:
+            query = """
+                SELECT id, client_id, title, created_at, updated_at
+                FROM conversations
+                WHERE client_id = %s AND user_id IS NULL
+                ORDER BY updated_at DESC, id DESC
+            """
+            params = (client_id,)
+        else:
+            raise ValueError("An authenticated user or legacy client ID is required.")
 
         with self._connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(query, (client_id,))
+                cursor.execute(query, params)
                 rows = cursor.fetchall()
 
         return [self._conversation_dict(row) for row in rows]
@@ -100,16 +120,28 @@ class PostgresChatHistoryStorage:
     def get_conversation(
         self,
         conversation_id: UUID,
-        client_id: UUID,
+        client_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> dict | None:
-        """Retrieve a conversation and its messages."""
+        """Retrieve a conversation owned by a user or legacy browser client."""
         self._ensure_schema()
 
-        conversation_query = """
-            SELECT id, client_id, title, created_at, updated_at
-            FROM conversations
-            WHERE id = %s AND client_id = %s
-        """
+        if user_id is not None:
+            conversation_query = """
+                SELECT id, client_id, title, created_at, updated_at
+                FROM conversations
+                WHERE id = %s AND user_id = %s
+            """
+            params = (conversation_id, user_id)
+        elif client_id is not None:
+            conversation_query = """
+                SELECT id, client_id, title, created_at, updated_at
+                FROM conversations
+                WHERE id = %s AND client_id = %s AND user_id IS NULL
+            """
+            params = (conversation_id, client_id)
+        else:
+            raise ValueError("An authenticated user or legacy client ID is required.")
 
         messages_query = """
             SELECT id, role, content, created_at
@@ -120,10 +152,7 @@ class PostgresChatHistoryStorage:
 
         with self._connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    conversation_query,
-                    (conversation_id, client_id),
-                )
+                cursor.execute(conversation_query, params)
                 conversation = cursor.fetchone()
 
                 if conversation is None:
@@ -148,11 +177,12 @@ class PostgresChatHistoryStorage:
     def append_message(
         self,
         conversation_id: UUID,
-        client_id: UUID,
+        client_id: UUID | None,
         role: str,
         content: str,
+        user_id: UUID | None = None,
     ) -> dict | None:
-        """Append a message and update its conversation timestamp."""
+        """Append a message after verifying conversation ownership."""
         self._ensure_schema()
 
         if role not in {"user", "assistant"}:
@@ -163,17 +193,42 @@ class PostgresChatHistoryStorage:
         if not content:
             raise ValueError("Message content must not be empty.")
 
+        if user_id is not None:
+            ownership_query = """
+                SELECT title
+                FROM conversations
+                WHERE id = %s AND user_id = %s
+                FOR UPDATE
+            """
+            ownership_params = (conversation_id, user_id)
+            update_query = """
+                UPDATE conversations
+                SET title = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND user_id = %s
+            """
+            update_owner_params = (conversation_id, user_id)
+        elif client_id is not None:
+            ownership_query = """
+                SELECT title
+                FROM conversations
+                WHERE id = %s AND client_id = %s AND user_id IS NULL
+                FOR UPDATE
+            """
+            ownership_params = (conversation_id, client_id)
+            update_query = """
+                UPDATE conversations
+                SET title = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND client_id = %s AND user_id IS NULL
+            """
+            update_owner_params = (conversation_id, client_id)
+        else:
+            raise ValueError("An authenticated user or legacy client ID is required.")
+
         with self._connection() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT title
-                    FROM conversations
-                    WHERE id = %s AND client_id = %s
-                    FOR UPDATE
-                    """,
-                    (conversation_id, client_id),
-                )
+                cursor.execute(ownership_query, ownership_params)
                 row = cursor.fetchone()
 
                 if row is None:
@@ -199,13 +254,8 @@ class PostgresChatHistoryStorage:
                 message = cursor.fetchone()
 
                 cursor.execute(
-                    """
-                    UPDATE conversations
-                    SET title = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s AND client_id = %s
-                    """,
-                    (title, conversation_id, client_id),
+                    update_query,
+                    (title, *update_owner_params),
                 )
 
         return {
@@ -214,6 +264,29 @@ class PostgresChatHistoryStorage:
             "content": message[2],
             "created_at": message[3],
         }
+
+    def link_legacy_conversations(
+        self,
+        client_id: UUID,
+        user_id: UUID,
+    ) -> int:
+        """Associate unclaimed legacy conversations with an authenticated user."""
+        self._ensure_schema()
+
+        query = """
+            UPDATE conversations
+            SET user_id = %s
+            WHERE client_id = %s
+              AND user_id IS NULL
+            RETURNING id
+        """
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, (user_id, client_id))
+                linked_rows = cursor.fetchall()
+
+        return len(linked_rows)
 
     @staticmethod
     def _conversation_dict(row: tuple) -> dict:
