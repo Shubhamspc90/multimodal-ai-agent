@@ -1228,14 +1228,7 @@ function App() {
     let cancelled = false;
 
     if (!authUser) {
-      setIsLoadingHistory(false);
-      setConversations([]);
-      setActiveConversationId(null);
-      setChatMessages([]);
-
-      return () => {
-        cancelled = true;
-      };
+      return ;
     }
 
     const restoreLatestConversation = async () => {
@@ -1321,7 +1314,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [authUser?.id, chatClientId]);
+  }, [authUser, chatClientId]);
 
   useEffect(() => {
     return () => {

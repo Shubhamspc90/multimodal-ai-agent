@@ -248,15 +248,12 @@ export function claimLegacyConversations(
   );
 }
 
-export function listConversations(
-  _legacyClientId?: string,
-): Promise<ConversationSummary[]> {
+export function listConversations(): Promise<ConversationSummary[]> {
   return apiRequest<ConversationSummary[]>("/api/v1/conversations");
 }
 
 export function getConversation(
   conversationId: string,
-  _legacyClientId?: string,
 ): Promise<ConversationDetail> {
   return apiRequest<ConversationDetail>(
     `/api/v1/conversations/${encodeURIComponent(conversationId)}`,
