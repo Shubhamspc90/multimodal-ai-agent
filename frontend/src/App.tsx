@@ -1,15 +1,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import AuthPanel from "./components/AuthPanel";
+
 import {
+  ApiError,
   apiRequest,
   checkApiHealth,
+  claimLegacyConversations,
   createConversation,
   getConversation,
+  getCurrentUser,
   listConversations,
+  logoutUser,
   sendConversationMessage,
 } from "./lib/api";
 
 import type {
+  AuthUser,
   ConversationDetail,
   ConversationSummary,
 } from "./lib/api";
@@ -17,7 +24,7 @@ import type {
 import {
   AudioLines,
   Bot,
-  ChevronDown,
+  LogOut,
   FileText,
   Image,
   Menu,
@@ -222,6 +229,13 @@ function getOrCreateChatClientId(): string {
   return newId;
 }
 
+function isSessionError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 401 || error.status === 403)
+  );
+}
+
 function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("Chat");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -281,6 +295,11 @@ function App() {
 
   const flushResolveRef = useRef<(() => void) | null>(null);
 
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState("");
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
   const [apiStatus, setApiStatus] = useState<
     "checking" | "connected" | "disconnected"
   >("checking");
@@ -307,11 +326,61 @@ function App() {
     }
   }, []);
 
+  const handleAuthenticated = useCallback((user: AuthUser) => {
+    setAuthError("");
+    setAuthUser(user);
+    setActiveWorkspace("Chat");
+    setSidebarOpen(false);
+    setActiveConversationId(null);
+    setChatMessages([]);
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    if (
+      isLoggingOut ||
+      isSending ||
+      voiceRecordingStatus !== "idle"
+    ) {
+      return;
+    }
+
+    setIsLoggingOut(true);
+    setHistoryError("");
+
+    try {
+      await logoutUser();
+
+      setAuthUser(null);
+      setConversations([]);
+      setActiveConversationId(null);
+      setChatMessages([]);
+      setMessageDraft("");
+      setChatError("");
+      setHistoryError("");
+      setAuthError("");
+    } catch (error: unknown) {
+      if (isSessionError(error)) {
+        setAuthError(
+          "Your session has expired or its security token is invalid. Please sign in again.",
+        );
+        setAuthUser(null);
+      } else {
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : "Unable to sign out. Please try again.",
+        );
+      }
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }, [isLoggingOut, isSending, voiceRecordingStatus]);
+
   const refreshConversations = useCallback(async () => {
-    const result = await listConversations(chatClientId);
+    const result = await listConversations();
     setConversations(result);
     return result;
-  }, [chatClientId]);
+  }, []);
 
   const handleNewConversation = useCallback(async () => {
     if (isCreatingConversation || isSending) return;
@@ -334,6 +403,13 @@ function App() {
       setActiveConversationId(conversation.id);
       setChatMessages([]);
     } catch (error: unknown) {
+      if (isSessionError(error)) {
+        setAuthError(
+          "Your session has expired or needs verification. Please sign in again.",
+        );
+        setAuthUser(null);
+        return;
+      }
       setChatError(
         error instanceof Error
           ? error.message
@@ -353,10 +429,7 @@ function App() {
       setChatError("");
 
       try {
-        const conversation: ConversationDetail = await getConversation(
-          conversationId,
-          chatClientId,
-        );
+        const conversation: ConversationDetail = await getConversation(conversationId);
 
         setActiveConversationId(conversation.id);
 
@@ -371,6 +444,13 @@ function App() {
         setActiveWorkspace("Chat");
         setSidebarOpen(false);
       } catch (error: unknown) {
+        if (isSessionError(error)) {
+          setAuthError(
+            "Your session has expired or needs verification. Please sign in again.",
+          );
+          setAuthUser(null);
+          return;
+        }
         setHistoryError(
           error instanceof Error
             ? error.message
@@ -380,7 +460,7 @@ function App() {
         setIsLoadingConversation(false);
       }
     },
-    [chatClientId, isLoadingConversation, isSending],
+    [isLoadingConversation, isSending],
   );
 
   const handleSendMessage = useCallback(async () => {
@@ -454,6 +534,14 @@ function App() {
         );
       }
     } catch (error: unknown) {
+      if (isSessionError(error)) {
+        setChatMessages((previous) =>
+          previous.filter((item) => item.id !== optimisticId),
+        );
+        setAuthError("Your session has expired or needs verification. Please sign in again.");
+        setAuthUser(null);
+        return;
+      }
       if (!conversationId) {
         // Keep the existing AI chat usable if PostgreSQL is unavailable
         // before a new conversation can be created.
@@ -495,10 +583,7 @@ function App() {
         // The backend saves the user message before calling the AI.
         // Recover it when AI generation fails.
         try {
-          const conversation = await getConversation(
-            conversationId,
-            chatClientId,
-          );
+          const conversation = await getConversation(conversationId);
 
           setChatMessages(
             conversation.messages.map((item) => ({
@@ -1097,15 +1182,92 @@ function App() {
     };
   }, []);
 
+  // Restore the authenticated user when the application loads.
   useEffect(() => {
     let cancelled = false;
+
+    const restoreSession = async () => {
+      try {
+        const user = await getCurrentUser();
+
+        if (cancelled) return;
+
+        setAuthUser(user);
+        setAuthError("");
+      } catch (error: unknown) {
+        if (cancelled) return;
+
+        setAuthUser(null);
+
+        if (error instanceof ApiError && error.status === 401) {
+          // No active login session is normal for a first-time visitor.
+          setAuthError("");
+        } else {
+          setAuthError(
+            error instanceof Error
+              ? error.message
+              : "Unable to verify your login session.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsAuthLoading(false);
+        }
+      }
+    };
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load only the conversations belonging to the authenticated user.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!authUser) {
+      setIsLoadingHistory(false);
+      setConversations([]);
+      setActiveConversationId(null);
+      setChatMessages([]);
+
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const restoreLatestConversation = async () => {
       setIsLoadingHistory(true);
       setHistoryError("");
 
       try {
-        const savedConversations = await listConversations(chatClientId);
+        // Migrate eligible conversations created before authentication
+        // was introduced. The backend only claims unowned conversations.
+        try {
+          await claimLegacyConversations(chatClientId);
+        } catch (error: unknown) {
+          if (cancelled) return;
+
+          if (isSessionError(error)) {
+            setAuthError(
+              "Your session has expired or needs verification. Please sign in again.",
+            );
+            setAuthUser(null);
+            return;
+          }
+
+          setHistoryError(
+            error instanceof Error
+              ? `Previous conversations could not be migrated: ${error.message}`
+              : "Previous conversations could not be migrated.",
+          );
+        }
+
+        if (cancelled) return;
+
+        const savedConversations = await listConversations();
 
         if (cancelled) return;
 
@@ -1119,7 +1281,6 @@ function App() {
 
         const latestConversation = await getConversation(
           savedConversations[0].id,
-          chatClientId,
         );
 
         if (cancelled) return;
@@ -1136,11 +1297,18 @@ function App() {
       } catch (error: unknown) {
         if (cancelled) return;
 
-        setHistoryError(
-          error instanceof Error
-            ? error.message
-            : "Unable to restore conversation history.",
-        );
+        if (isSessionError(error)) {
+          setAuthError(
+            "Your session has expired or needs verification. Please sign in again.",
+          );
+          setAuthUser(null);
+        } else {
+          setHistoryError(
+            error instanceof Error
+              ? error.message
+              : "Unable to restore conversation history.",
+          );
+        }
       } finally {
         if (!cancelled) {
           setIsLoadingHistory(false);
@@ -1153,7 +1321,8 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [chatClientId]);
+  }, [authUser?.id, chatClientId]);
+
   useEffect(() => {
     return () => {
       recordedChunksRef.current = [];
@@ -1164,6 +1333,25 @@ function App() {
       releaseMicrophone();
     };
   }, [releaseMicrophone]);
+
+  if (isAuthLoading) {
+    return (
+      <main className="auth-screen">
+        <section className="auth-card" role="status">
+          <p>Checking your session...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <AuthPanel
+        onAuthenticated={handleAuthenticated}
+        initialError={authError}
+      />
+    );
+  }
 
   const active = workspaces.find((item) => item.name === activeWorkspace)!;
   const ActiveIcon = active.icon;
@@ -1286,12 +1474,29 @@ function App() {
             <span>Settings</span>
           </button>
           <div className="profile">
-            <div className="avatar">AI</div>
-            <div className="profile-copy">
-              <strong>Workspace user</strong>
-              <span>Personal workspace</span>
+            <div className="avatar">
+              {authUser.name.trim().charAt(0).toUpperCase()}
             </div>
-            <ChevronDown size={17} />
+
+            <div className="profile-copy">
+              <strong>{authUser.name}</strong>
+              <span>{authUser.email}</span>
+            </div>
+
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Sign out"
+              title="Sign out"
+              onClick={() => void handleLogout()}
+              disabled={
+                isLoggingOut ||
+                isSending ||
+                voiceRecordingStatus !== "idle"
+              }
+            >
+              <LogOut size={17} />
+            </button>
           </div>
         </div>
       </aside>
