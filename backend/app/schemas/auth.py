@@ -38,6 +38,34 @@ class LoginRequest(BaseModel):
         StringConstraints(min_length=1, max_length=128),
     ]
 
+class UpdateProfileRequest(BaseModel):
+    """Validate profile update data."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=100,
+        ),
+    ]
+
+class ChangePasswordRequest(BaseModel):
+    """Validate password change data."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: Annotated[
+        str,
+        StringConstraints(min_length=1, max_length=128),
+    ]
+
+    new_password: Annotated[
+        str,
+        StringConstraints(min_length=8, max_length=128),
+    ]
 
 class AuthUserResponse(BaseModel):
     """Expose safe public user information."""

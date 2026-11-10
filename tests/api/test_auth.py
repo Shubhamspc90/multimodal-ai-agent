@@ -52,6 +52,46 @@ class FakeAuthenticationService:
 
         return dict(user)
 
+    def update_user_name(self, user_id, name: str) -> dict | None:
+        """Update a user's display name."""
+        user = next(
+            (
+                item
+                for item in self.users.values()
+                if item["id"] == user_id
+            ),
+            None,
+        )
+
+        if user is None:
+            return None
+
+        user["name"] = name.strip()
+        return dict(user)
+
+    def change_password(
+        self,
+        user_id,
+        current_password: str,
+        new_password: str,
+    ) -> None:
+        """Change a user's password after verifying the current password."""
+        user = next(
+            (
+                item
+                for item in self.users.values()
+                if item["id"] == user_id
+            ),
+            None,
+        )
+
+        if user is None:
+            raise ValueError("User not found.")
+
+        if self.passwords[user["email"]] != current_password:
+            raise InvalidCredentialsError("Invalid credentials.")
+
+        self.passwords[user["email"]] = new_password
 
 class FakeAuthSessionStorage:
     """Provide in-memory session storage for API tests."""
@@ -105,8 +145,20 @@ class FakeAuthSessionStorage:
         if session["expires_at"] <= datetime.now(UTC):
             return None
 
+        user = next(
+            (
+                item
+                for item in self.authentication_service.users.values()
+                if item["id"] == session["user_id"]
+            ),
+            None,
+        )
+
+        if user is None:
+            return None
+
         return {
-            "user": dict(session["user"]),
+            "user": dict(user),
             "expires_at": session["expires_at"],
             "csrf_token_hash": session["csrf_token_hash"],
         }
@@ -183,6 +235,25 @@ def register_test_user(client: TestClient) -> None:
     )
 
     assert response.status_code == 201
+
+def login_test_user(client: TestClient) -> str:
+    """Register and log in a test user, returning the CSRF token."""
+    register_test_user(client)
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": "shubham@example.com",
+            "password": "SecurePassword123!",
+        },
+    )
+
+    assert response.status_code == 200
+
+    csrf_token = client.cookies.get(CSRF_COOKIE_NAME)
+    assert csrf_token
+
+    return csrf_token
 
 
 def test_register_user_returns_public_profile(api_client):
@@ -374,3 +445,140 @@ def test_logout_is_idempotent_without_cookie(api_client):
     response = client.post("/api/v1/auth/logout")
 
     assert response.status_code == 204
+
+def test_update_profile_requires_authenticated_session(api_client):
+    client, _ = api_client
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={"name": "Updated Name"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_update_profile_rejects_missing_csrf_token(api_client):
+    client, _ = api_client
+    login_test_user(client)
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={"name": "Updated Name"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_update_profile_rejects_invalid_csrf_token(api_client):
+    client, _ = api_client
+    login_test_user(client)
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={"name": "Updated Name"},
+        headers={CSRF_HEADER_NAME: "incorrect-token"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_update_profile_with_valid_csrf_token(api_client):
+    client, _ = api_client
+    csrf_token = login_test_user(client)
+
+    response = client.patch(
+        "/api/v1/auth/me",
+        json={"name": "Updated Shubham"},
+        headers={CSRF_HEADER_NAME: csrf_token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Updated Shubham"
+    assert response.json()["email"] == "shubham@example.com"
+
+    me_response = client.get("/api/v1/auth/me")
+
+    assert me_response.status_code == 200
+    assert me_response.json()["name"] == "Updated Shubham"
+
+
+def test_change_password_requires_authenticated_session(api_client):
+    client, _ = api_client
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={
+            "current_password": "SecurePassword123!",
+            "new_password": "NewSecurePassword123!",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_change_password_rejects_missing_csrf_token(api_client):
+    client, _ = api_client
+    login_test_user(client)
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={
+            "current_password": "SecurePassword123!",
+            "new_password": "NewSecurePassword123!",
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_change_password_rejects_invalid_csrf_token(api_client):
+    client, _ = api_client
+    login_test_user(client)
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={
+            "current_password": "SecurePassword123!",
+            "new_password": "NewSecurePassword123!",
+        },
+        headers={CSRF_HEADER_NAME: "incorrect-token"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_change_password_rejects_wrong_current_password(api_client):
+    client, _ = api_client
+    csrf_token = login_test_user(client)
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={
+            "current_password": "WrongPassword123!",
+            "new_password": "NewSecurePassword123!",
+        },
+        headers={CSRF_HEADER_NAME: csrf_token},
+    )
+
+    assert response.status_code == 400
+
+
+def test_change_password_with_valid_credentials(api_client):
+    client, fixture = api_client
+    csrf_token = login_test_user(client)
+
+    response = client.post(
+        "/api/v1/auth/change-password",
+        json={
+            "current_password": "SecurePassword123!",
+            "new_password": "NewSecurePassword123!",
+        },
+        headers={CSRF_HEADER_NAME: csrf_token},
+    )
+
+    assert response.status_code == 204
+
+    assert (
+        fixture.auth_service.passwords["shubham@example.com"]
+        == "NewSecurePassword123!"
+    )

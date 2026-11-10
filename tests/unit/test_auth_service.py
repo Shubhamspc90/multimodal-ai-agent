@@ -9,6 +9,7 @@ from backend.app.services.auth_service import (
     AuthenticationService,
     InvalidCredentialsError,
     PasswordPolicyError,
+    UserNotFoundError,
 )
 from backend.app.services.auth_storage import DuplicateEmailError
 
@@ -44,6 +45,45 @@ class FakeUserStorage:
     def get_user_for_authentication(self, email: str) -> dict | None:
         """Retrieve internal account data for password verification."""
         return self.users.get(email)
+
+
+    def update_user_name(self, user_id, name):
+        """Update a user's name in the in-memory test storage."""
+        user = next(
+            (item for item in self.users.values() if item["id"] == user_id),
+            None,
+        )
+
+        if user is None:
+            return None
+
+        user["name"] = name
+
+        return {
+            key: value
+            for key, value in user.items()
+            if key != "password_hash"
+        }
+
+    def get_user_credentials_by_id(self, user_id):
+        """Retrieve internal credentials by user ID."""
+        return next(
+            (item for item in self.users.values() if item["id"] == user_id),
+            None,
+        )
+
+    def update_password_hash(self, user_id, password_hash):
+        """Update a user's password hash in test storage."""
+        user = next(
+            (item for item in self.users.values() if item["id"] == user_id),
+            None,
+        )
+
+        if user is None:
+            return False
+
+        user["password_hash"] = password_hash
+        return True
 
 
 @pytest.fixture
@@ -173,3 +213,121 @@ def test_authenticate_user_rejects_empty_credentials(auth_service):
 
     with pytest.raises(InvalidCredentialsError):
         auth_service.authenticate_user("user@example.com", "")
+
+def test_update_user_name_normalizes_name(auth_service):
+    user = auth_service.register_user(
+        "Shubham",
+        "shubham@example.com",
+        "SecurePassword123!",
+    )
+
+    updated = auth_service.update_user_name(
+        user["id"],
+        "  Updated Name  ",
+    )
+
+    assert updated["name"] == "Updated Name"
+    assert updated["email"] == "shubham@example.com"
+    assert "password_hash" not in updated
+
+
+@pytest.mark.parametrize("name", ["", "   ", "A" * 101])
+def test_update_user_name_rejects_invalid_name(auth_service, name):
+    user = auth_service.register_user(
+        "Shubham",
+        "shubham@example.com",
+        "SecurePassword123!",
+    )
+
+    with pytest.raises(ValueError):
+        auth_service.update_user_name(user["id"], name)
+
+
+def test_update_user_name_rejects_unknown_user(auth_service):
+    with pytest.raises(UserNotFoundError):
+        auth_service.update_user_name(uuid4(), "Updated Name")
+
+
+def test_change_password_updates_password_hash(auth_service, storage):
+    user = auth_service.register_user(
+        "Shubham",
+        "shubham@example.com",
+        "SecurePassword123!",
+    )
+
+    old_hash = storage.users["shubham@example.com"]["password_hash"]
+
+    auth_service.change_password(
+        user["id"],
+        "SecurePassword123!",
+        "NewSecurePassword456!",
+    )
+
+    new_hash = storage.users["shubham@example.com"]["password_hash"]
+
+    assert new_hash != old_hash
+    assert auth_service.authenticate_user(
+        "shubham@example.com",
+        "NewSecurePassword456!",
+    )["id"] == user["id"]
+
+
+def test_change_password_rejects_incorrect_current_password(auth_service):
+    user = auth_service.register_user(
+        "Shubham",
+        "shubham@example.com",
+        "SecurePassword123!",
+    )
+
+    with pytest.raises(InvalidCredentialsError):
+        auth_service.change_password(
+            user["id"],
+            "WrongPassword123!",
+            "NewSecurePassword456!",
+        )
+
+
+def test_change_password_rejects_same_password(auth_service):
+    user = auth_service.register_user(
+        "Shubham",
+        "shubham@example.com",
+        "SecurePassword123!",
+    )
+
+    with pytest.raises(PasswordPolicyError, match="different"):
+        auth_service.change_password(
+            user["id"],
+            "SecurePassword123!",
+            "SecurePassword123!",
+        )
+
+
+@pytest.mark.parametrize(
+    "new_password",
+    ["", "short", "   ", "A" * 129],
+)
+def test_change_password_rejects_invalid_new_password(
+    auth_service,
+    new_password,
+):
+    user = auth_service.register_user(
+        "Shubham",
+        "shubham@example.com",
+        "SecurePassword123!",
+    )
+
+    with pytest.raises(PasswordPolicyError):
+        auth_service.change_password(
+            user["id"],
+            "SecurePassword123!",
+            new_password,
+        )
+
+
+def test_change_password_rejects_unknown_user(auth_service):
+    with pytest.raises(UserNotFoundError):
+        auth_service.change_password(
+            uuid4(),
+            "SecurePassword123!",
+            "NewSecurePassword456!",
+        )
