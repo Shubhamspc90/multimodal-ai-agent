@@ -170,6 +170,88 @@ class PostgresUserStorage:
 
         return self._public_user_dict(row)
 
+    def update_user_name(self, user_id: UUID, name: str) -> dict | None:
+        """Update a user's display name and return public account details."""
+        normalized_name = name.strip()
+
+        if not normalized_name:
+            raise ValueError("Name must not be empty.")
+
+        if len(normalized_name) > 100:
+            raise ValueError("Name must not exceed 100 characters.")
+
+        self._ensure_schema()
+
+        query = """
+            UPDATE users
+            SET name = %s
+            WHERE id = %s
+            RETURNING id, name, email, created_at
+        """
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, (normalized_name, user_id))
+                row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return self._public_user_dict(row)
+
+    def get_user_credentials_by_id(self, user_id: UUID) -> dict | None:
+        """Retrieve internal account credentials by user ID."""
+        self._ensure_schema()
+
+        query = """
+            SELECT id, name, email, password_hash, created_at
+            FROM users
+            WHERE id = %s
+        """
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, (user_id,))
+                row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "id": row[0],
+            "name": row[1],
+            "email": row[2],
+            "password_hash": row[3],
+            "created_at": row[4],
+        }
+
+    def update_password_hash(
+        self,
+        user_id: UUID,
+        password_hash: str,
+    ) -> bool:
+        """Update a user's password hash without exposing credentials."""
+        normalized_hash = password_hash.strip()
+
+        if not normalized_hash:
+            raise ValueError("Password hash must not be empty.")
+
+        self._ensure_schema()
+
+        query = """
+            UPDATE users
+            SET password_hash = %s
+            WHERE id = %s
+            RETURNING id
+        """
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, (normalized_hash, user_id))
+                row = cursor.fetchone()
+
+        return row is not None
+
     @staticmethod
     def _public_user_dict(row: tuple) -> dict:
         """Convert a database row into safe public account details."""

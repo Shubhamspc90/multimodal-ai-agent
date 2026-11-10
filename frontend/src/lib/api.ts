@@ -150,6 +150,15 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface UpdateProfileRequest {
+  name: string;
+}
+
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
 export function registerUser(
   request: RegisterRequest,
 ): Promise<AuthUser> {
@@ -176,6 +185,30 @@ export function loginUser(
 
 export function getCurrentUser(): Promise<AuthUser> {
   return apiRequest<AuthUser>("/api/v1/auth/me");
+}
+
+export function updateUserProfile(
+  request: UpdateProfileRequest,
+): Promise<AuthUser> {
+  return apiRequest<AuthUser>("/api/v1/auth/me", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+}
+
+export function changeUserPassword(
+  request: ChangePasswordRequest,
+): Promise<void> {
+  return apiRequest<void>("/api/v1/auth/change-password", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
 }
 
 export function logoutUser(): Promise<void> {

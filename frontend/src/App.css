@@ -1331,3 +1331,152 @@ button:focus-visible {
     height: 38px;
   }
 }
+
+/* Account settings */
+
+.settings-view {
+  max-width: 760px;
+  margin: 0 auto;
+  padding-bottom: 35px;
+}
+
+.settings-page-heading {
+  margin-bottom: 30px;
+}
+
+.settings-page-heading h1 {
+  margin: 12px 0 8px;
+  font-size: 30px;
+}
+
+.settings-page-heading > p {
+  color: var(--text-secondary);
+}
+
+.settings-card {
+  margin-bottom: 24px;
+  padding: 26px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.settings-card-heading {
+  margin-bottom: 22px;
+}
+
+.settings-card-heading h2 {
+  margin: 0 0 7px;
+  font-size: 19px;
+}
+
+.settings-card-heading p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.settings-profile-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 25px;
+}
+
+.settings-profile-summary > div:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.settings-profile-summary span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-form label {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-form input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  background: var(--background);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+
+.settings-form input:focus {
+  border-color: var(--accent);
+}
+
+.settings-form input:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.settings-account-date {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.settings-account-date span {
+  color: var(--text-secondary);
+}
+
+.settings-submit {
+  align-self: flex-start;
+  margin-top: 10px;
+  padding: 11px 19px;
+  border: none;
+  border-radius: 9px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.settings-error,
+.settings-success {
+  margin: 5px 0;
+  font-size: 13px;
+}
+
+.settings-error {
+  color: #dc5555;
+}
+
+.settings-success {
+  color: #249b68;
+}
+
+@media (max-width: 600px) {
+  .settings-card {
+    padding: 19px;
+  }
+
+  .settings-account-date {
+    flex-direction: column;
+    gap: 6px;
+  }
+}

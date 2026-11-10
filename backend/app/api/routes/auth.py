@@ -14,6 +14,7 @@ from backend.app.api.dependencies import (
     SESSION_COOKIE_NAME,
     CsrfCookie,
     CsrfHeader,
+    CsrfProtection,
     CurrentUser,
     SessionCookie,
     SessionStorageDependency,
@@ -27,14 +28,17 @@ from backend.app.api.dependencies import (
 from backend.app.core.config import settings
 from backend.app.schemas.auth import (
     AuthUserResponse,
+    ChangePasswordRequest,
     LoginRequest,
     LoginResponse,
     RegisterRequest,
+    UpdateProfileRequest,
 )
 from backend.app.services.auth_service import (
     AuthenticationService,
     InvalidCredentialsError,
     PasswordPolicyError,
+    UserNotFoundError,
 )
 from backend.app.services.auth_storage import DuplicateEmailError
 
@@ -226,3 +230,65 @@ def logout_user(
 def get_current_user(current_user: CurrentUser) -> dict:
     """Return the currently authenticated user."""
     return current_user
+
+
+@router.patch("/me", response_model=AuthUserResponse)
+def update_current_user(
+    request: UpdateProfileRequest,
+    current_user: CurrentUser,
+    service: AuthServiceDependency,
+    csrf_protection: CsrfProtection,
+) -> dict:
+    """Update the authenticated user's profile."""
+    try:
+        return service.update_user_name(
+            user_id=current_user["id"],
+            name=request.name,
+        )
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except psycopg.Error as exc:
+        raise _database_unavailable(exc) from exc
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+def change_current_user_password(
+    request: ChangePasswordRequest,
+    current_user: CurrentUser,
+    service: AuthServiceDependency,
+    csrf_protection: CsrfProtection,
+) -> Response:
+    """Change the authenticated user's password."""
+    try:
+        service.change_password(
+            user_id=current_user["id"],
+            current_password=request.current_password,
+            new_password=request.new_password,
+        )
+    except InvalidCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except PasswordPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except UserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except psycopg.Error as exc:
+        raise _database_unavailable(exc) from exc
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

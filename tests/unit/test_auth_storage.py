@@ -259,3 +259,146 @@ def test_create_user_initializes_schema_before_insert(database_mocks):
     )
     assert any("CREATE UNIQUE INDEX" in query for query in executed_queries)
     assert any("INSERT INTO users" in query for query in executed_queries)
+
+
+def test_update_user_name_normalizes_name_and_returns_public_data(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+    timestamp = datetime.now(UTC)
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = (
+        user_id,
+        "Updated Name",
+        "shubham@example.com",
+        timestamp,
+    )
+
+    result = storage.update_user_name(user_id, "  Updated Name  ")
+
+    assert result == {
+        "id": user_id,
+        "name": "Updated Name",
+        "email": "shubham@example.com",
+        "created_at": timestamp,
+    }
+    assert "password_hash" not in result
+
+    query, params = cursor.execute.call_args.args
+    assert "UPDATE users" in query
+    assert "SET name = %s" in query
+    assert params == ("Updated Name", user_id)
+
+
+@pytest.mark.parametrize("name", ["", "   ", "A" * 101])
+def test_update_user_name_rejects_invalid_name(
+    storage,
+    database_mocks,
+    name,
+):
+    connect, _, _ = database_mocks
+
+    with pytest.raises(ValueError):
+        storage.update_user_name(uuid4(), name)
+
+    connect.assert_not_called()
+
+
+def test_update_user_name_returns_none_for_unknown_user(
+    storage,
+    database_mocks,
+):
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = None
+
+    assert storage.update_user_name(uuid4(), "Updated Name") is None
+
+
+def test_get_user_credentials_by_id_returns_internal_credentials(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+    timestamp = datetime.now(UTC)
+    password_hash = "$argon2id$example-hash"
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = (
+        user_id,
+        "Shubham Chauhan",
+        "shubham@example.com",
+        password_hash,
+        timestamp,
+    )
+
+    result = storage.get_user_credentials_by_id(user_id)
+
+    assert result == {
+        "id": user_id,
+        "name": "Shubham Chauhan",
+        "email": "shubham@example.com",
+        "password_hash": password_hash,
+        "created_at": timestamp,
+    }
+
+    query, params = cursor.execute.call_args.args
+    assert "password_hash" in query
+    assert "WHERE id = %s" in query
+    assert params == (user_id,)
+
+
+def test_get_user_credentials_by_id_returns_none_for_unknown_user(
+    storage,
+    database_mocks,
+):
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = None
+
+    assert storage.get_user_credentials_by_id(uuid4()) is None
+
+
+def test_update_password_hash_returns_true_when_user_exists(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+    password_hash = "$argon2id$new-example-hash"
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = (user_id,)
+
+    result = storage.update_password_hash(user_id, password_hash)
+
+    assert result is True
+
+    query, params = cursor.execute.call_args.args
+    assert "UPDATE users" in query
+    assert "SET password_hash = %s" in query
+    assert params == (password_hash, user_id)
+
+
+def test_update_password_hash_returns_false_for_unknown_user(
+    storage,
+    database_mocks,
+):
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = None
+
+    assert (
+        storage.update_password_hash(
+            uuid4(),
+            "$argon2id$new-example-hash",
+        )
+        is False
+    )
+
+
+def test_update_password_hash_rejects_empty_hash(storage, database_mocks):
+    connect, _, _ = database_mocks
+
+    with pytest.raises(ValueError, match="Password hash"):
+        storage.update_password_hash(uuid4(), "   ")
+
+    connect.assert_not_called()
