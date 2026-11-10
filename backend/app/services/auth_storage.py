@@ -252,7 +252,6 @@ class PostgresUserStorage:
 
         return row is not None
 
-
     @staticmethod
     def _public_user_dict(row: tuple) -> dict:
         """Convert a database row into safe public account details."""

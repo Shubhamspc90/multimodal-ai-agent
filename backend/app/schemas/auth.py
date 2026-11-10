@@ -38,6 +38,7 @@ class LoginRequest(BaseModel):
         StringConstraints(min_length=1, max_length=128),
     ]
 
+
 class UpdateProfileRequest(BaseModel):
     """Validate profile update data."""
 
@@ -51,6 +52,7 @@ class UpdateProfileRequest(BaseModel):
             max_length=100,
         ),
     ]
+
 
 class ChangePasswordRequest(BaseModel):
     """Validate password change data."""
@@ -66,6 +68,7 @@ class ChangePasswordRequest(BaseModel):
         str,
         StringConstraints(min_length=8, max_length=128),
     ]
+
 
 class AuthUserResponse(BaseModel):
     """Expose safe public user information."""

@@ -55,11 +55,7 @@ class FakeAuthenticationService:
     def update_user_name(self, user_id, name: str) -> dict | None:
         """Update a user's display name."""
         user = next(
-            (
-                item
-                for item in self.users.values()
-                if item["id"] == user_id
-            ),
+            (item for item in self.users.values() if item["id"] == user_id),
             None,
         )
 
@@ -77,11 +73,7 @@ class FakeAuthenticationService:
     ) -> None:
         """Change a user's password after verifying the current password."""
         user = next(
-            (
-                item
-                for item in self.users.values()
-                if item["id"] == user_id
-            ),
+            (item for item in self.users.values() if item["id"] == user_id),
             None,
         )
 
@@ -92,6 +84,7 @@ class FakeAuthenticationService:
             raise InvalidCredentialsError("Invalid credentials.")
 
         self.passwords[user["email"]] = new_password
+
 
 class FakeAuthSessionStorage:
     """Provide in-memory session storage for API tests."""
@@ -235,6 +228,7 @@ def register_test_user(client: TestClient) -> None:
     )
 
     assert response.status_code == 201
+
 
 def login_test_user(client: TestClient) -> str:
     """Register and log in a test user, returning the CSRF token."""
@@ -446,6 +440,7 @@ def test_logout_is_idempotent_without_cookie(api_client):
 
     assert response.status_code == 204
 
+
 def test_update_profile_requires_authenticated_session(api_client):
     client, _ = api_client
 
@@ -579,6 +574,5 @@ def test_change_password_with_valid_credentials(api_client):
     assert response.status_code == 204
 
     assert (
-        fixture.auth_service.passwords["shubham@example.com"]
-        == "NewSecurePassword123!"
+        fixture.auth_service.passwords["shubham@example.com"] == "NewSecurePassword123!"
     )

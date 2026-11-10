@@ -46,7 +46,6 @@ class FakeUserStorage:
         """Retrieve internal account data for password verification."""
         return self.users.get(email)
 
-
     def update_user_name(self, user_id, name):
         """Update a user's name in the in-memory test storage."""
         user = next(
@@ -59,11 +58,7 @@ class FakeUserStorage:
 
         user["name"] = name
 
-        return {
-            key: value
-            for key, value in user.items()
-            if key != "password_hash"
-        }
+        return {key: value for key, value in user.items() if key != "password_hash"}
 
     def get_user_credentials_by_id(self, user_id):
         """Retrieve internal credentials by user ID."""
@@ -214,6 +209,7 @@ def test_authenticate_user_rejects_empty_credentials(auth_service):
     with pytest.raises(InvalidCredentialsError):
         auth_service.authenticate_user("user@example.com", "")
 
+
 def test_update_user_name_normalizes_name(auth_service):
     user = auth_service.register_user(
         "Shubham",
@@ -266,10 +262,13 @@ def test_change_password_updates_password_hash(auth_service, storage):
     new_hash = storage.users["shubham@example.com"]["password_hash"]
 
     assert new_hash != old_hash
-    assert auth_service.authenticate_user(
-        "shubham@example.com",
-        "NewSecurePassword456!",
-    )["id"] == user["id"]
+    assert (
+        auth_service.authenticate_user(
+            "shubham@example.com",
+            "NewSecurePassword456!",
+        )["id"]
+        == user["id"]
+    )
 
 
 def test_change_password_rejects_incorrect_current_password(auth_service):

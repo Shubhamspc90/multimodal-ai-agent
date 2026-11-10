@@ -1,4 +1,5 @@
 """Business logic for user registration and authentication."""
+
 from uuid import UUID
 
 from backend.app.core.security import hash_password, verify_password
@@ -19,8 +20,10 @@ class InvalidCredentialsError(ValueError):
 class PasswordPolicyError(ValueError):
     """Raised when a password does not meet account requirements."""
 
+
 class UserNotFoundError(ValueError):
     """Raised when an account cannot be found."""
+
 
 class AuthenticationService:
     """Handle registration and password-based authentication."""
@@ -88,7 +91,6 @@ class AuthenticationService:
             "created_at": user["created_at"],
         }
 
-
     def update_user_name(self, user_id: UUID, name: str) -> dict:
         """Validate and update a user's display name."""
         normalized_name = name.strip()
@@ -130,9 +132,7 @@ class AuthenticationService:
             current_password,
             user["password_hash"],
         ):
-            raise InvalidCredentialsError(
-                "Current password is incorrect."
-            )
+            raise InvalidCredentialsError("Current password is incorrect.")
 
         if verify_password(new_password, user["password_hash"]):
             raise PasswordPolicyError(
@@ -148,7 +148,6 @@ class AuthenticationService:
 
         if not updated:
             raise UserNotFoundError("User account was not found.")
-
 
     @staticmethod
     def _validate_password(password: str) -> None:

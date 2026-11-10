@@ -231,6 +231,7 @@ def get_current_user(current_user: CurrentUser) -> dict:
     """Return the currently authenticated user."""
     return current_user
 
+
 @router.patch("/me", response_model=AuthUserResponse)
 def update_current_user(
     request: UpdateProfileRequest,
@@ -256,6 +257,7 @@ def update_current_user(
         ) from exc
     except psycopg.Error as exc:
         raise _database_unavailable(exc) from exc
+
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
 def change_current_user_password(

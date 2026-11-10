@@ -386,10 +386,13 @@ def test_update_password_hash_returns_false_for_unknown_user(
     _, _, cursor = database_mocks
     cursor.fetchone.return_value = None
 
-    assert storage.update_password_hash(
-        uuid4(),
-        "$argon2id$new-example-hash",
-    ) is False
+    assert (
+        storage.update_password_hash(
+            uuid4(),
+            "$argon2id$new-example-hash",
+        )
+        is False
+    )
 
 
 def test_update_password_hash_rejects_empty_hash(storage, database_mocks):
