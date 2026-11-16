@@ -174,6 +174,57 @@ class PostgresChatHistoryStorage:
 
         return result
 
+
+    def delete_conversation(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> bool:
+        """Delete a conversation and its messages after verifying ownership."""
+        self._ensure_schema()
+
+        ownership_query = """
+            SELECT id
+            FROM conversations
+            WHERE id = %s AND user_id = %s
+            FOR UPDATE
+        """
+
+        delete_messages_query = """
+            DELETE FROM chat_messages
+            WHERE conversation_id = %s
+        """
+
+        delete_conversation_query = """
+            DELETE FROM conversations
+            WHERE id = %s AND user_id = %s
+            RETURNING id
+        """
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    ownership_query,
+                    (conversation_id, user_id),
+                )
+                conversation = cursor.fetchone()
+
+                if conversation is None:
+                    return False
+
+                cursor.execute(
+                    delete_messages_query,
+                    (conversation_id,),
+                )
+
+                cursor.execute(
+                    delete_conversation_query,
+                    (conversation_id, user_id),
+                )
+
+                return cursor.fetchone() is not None
+
+
     def append_message(
         self,
         conversation_id: UUID,

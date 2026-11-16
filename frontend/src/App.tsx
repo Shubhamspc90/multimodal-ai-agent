@@ -15,6 +15,7 @@ import {
   logoutUser,
   sendConversationMessage,
   updateUserProfile,
+  deleteConversation,
 } from "./lib/api";
 
 import type {
@@ -38,6 +39,7 @@ import {
   Sparkles,
   Square,
   X,
+  Trash2,
 } from "lucide-react";
 import "./App.css";
 
@@ -275,6 +277,8 @@ function App() {
 
   const [historyError, setHistoryError] = useState("");
 
+  const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
+
   const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
   const [documentQuestion, setDocumentQuestion] = useState("");
   const [documentAction, setDocumentAction] = useState<DocumentAction | null>(null);
@@ -401,7 +405,13 @@ function App() {
   }, []);
 
   const handleNewConversation = useCallback(async () => {
-    if (isCreatingConversation || isSending) return;
+    if (
+      isCreatingConversation ||
+      isSending ||
+      deletingConversationId
+    ) {
+      return;
+    }
 
     setActiveWorkspace("Chat");
     setSidebarOpen(false);
@@ -436,7 +446,7 @@ function App() {
     } finally {
       setIsCreatingConversation(false);
     }
-  }, [chatClientId, isCreatingConversation, isSending]);
+  }, [chatClientId,   deletingConversationId, isCreatingConversation, isSending]);
 
   const handleSelectConversation = useCallback(
     async (conversationId: string) => {
@@ -479,6 +489,90 @@ function App() {
       }
     },
     [isLoadingConversation, isSending],
+  );
+
+  const handleDeleteConversation = useCallback(
+    async (conversationId: string) => {
+      if (
+        deletingConversationId ||
+        isLoadingConversation ||
+        isSending
+      ) {
+        return;
+      }
+
+      const conversation = conversations.find(
+        (item) => item.id === conversationId,
+      );
+
+      const conversationTitle = conversation?.title ?? "this conversation";
+
+      const confirmed = window.confirm(
+        `Are you sure you want to delete "${conversationTitle}"? This action cannot be undone.`,
+      );
+
+      if (!confirmed) return;
+
+      const wasActiveConversation =
+        activeConversationId === conversationId;
+
+      setDeletingConversationId(conversationId);
+      setHistoryError("");
+      setChatError("");
+
+      try {
+        await deleteConversation(conversationId);
+
+        if (wasActiveConversation) {
+          setActiveConversationId(null);
+          setChatMessages([]);
+          setMessageDraft("");
+          setActiveWorkspace("Chat");
+        }
+
+        const remainingConversations = await refreshConversations();
+
+        if (wasActiveConversation && remainingConversations.length > 0) {
+          const latestConversation = await getConversation(
+            remainingConversations[0].id,
+          );
+
+          setActiveConversationId(latestConversation.id);
+
+          setChatMessages(
+            latestConversation.messages.map((message) => ({
+              id: message.id,
+              role: message.role,
+              content: message.content,
+            })),
+          );
+        }
+      } catch (error: unknown) {
+        if (isSessionError(error)) {
+          setAuthError(
+            "Your session has expired or needs verification. Please sign in again.",
+          );
+          setAuthUser(null);
+          return;
+        }
+
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : "Unable to delete this conversation.",
+        );
+      } finally {
+        setDeletingConversationId(null);
+      }
+    },
+    [
+      activeConversationId,
+      conversations,
+      deletingConversationId,
+      isLoadingConversation,
+      isSending,
+      refreshConversations,
+    ],
   );
 
   const handleSendMessage = useCallback(async () => {
@@ -1505,7 +1599,8 @@ function App() {
             isCreatingConversation ||
             isLoadingHistory ||
             isLoadingConversation ||
-            isSending
+            isSending ||
+            Boolean(deletingConversationId)
           }
         >
           <Plus size={17} />
@@ -1555,23 +1650,47 @@ function App() {
         {conversations.length > 0 && (
           <div className="conversation-list">
             {conversations.map((conversation) => (
-              <button
-                type="button"
-                key={conversation.id}
-                className={`conversation-item ${activeConversationId === conversation.id
-                  ? "conversation-item-active"
-                  : ""
-                  }`}
-                aria-current={
-                  activeConversationId === conversation.id ? "true" : undefined
-                }
-                title={conversation.title}
-                disabled={isLoadingConversation || isSending}
-                onClick={() => void handleSelectConversation(conversation.id)}
-              >
-                <MessageSquare size={15} />
-                <span>{conversation.title}</span>
-              </button>
+              <div className="conversation-row" key={conversation.id}>
+                <button
+                  type="button"
+                  className={`conversation-item ${activeConversationId === conversation.id
+                    ? "conversation-item-active"
+                    : ""
+                    }`}
+                  aria-current={
+                    activeConversationId === conversation.id
+                      ? "true"
+                      : undefined
+                  }
+                  title={conversation.title}
+                  disabled={
+                    isLoadingConversation ||
+                    isSending ||
+                    Boolean(deletingConversationId)
+                  }
+                  onClick={() => void handleSelectConversation(conversation.id)}
+                >
+                  <MessageSquare size={15} />
+                  <span>{conversation.title}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="conversation-delete"
+                  aria-label={`Delete ${conversation.title}`}
+                  title="Delete conversation"
+                  disabled={
+                    isLoadingConversation ||
+                    isSending ||
+                    Boolean(deletingConversationId)
+                  }
+                  onClick={() =>
+                    void handleDeleteConversation(conversation.id)
+                  }
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             ))}
           </div>
         )}

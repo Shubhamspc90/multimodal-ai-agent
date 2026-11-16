@@ -95,6 +95,20 @@ class FakeChatHistoryStorage:
             "messages": list(conversation["messages"]),
         }
 
+    def delete_conversation(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> bool:
+        """Delete a conversation only when it belongs to the authenticated user."""
+        conversation = self.conversations.get(conversation_id)
+
+        if conversation is None or conversation["user_id"] != user_id:
+            return False
+
+        del self.conversations[conversation_id]
+        return True
+
     def append_message(
         self,
         conversation_id: UUID,
@@ -470,3 +484,76 @@ def test_create_conversation_rejects_missing_csrf_header(api_client):
 
     assert response.status_code == 403
     assert storage.conversations == {}
+
+
+
+def test_delete_conversation_returns_no_content_and_removes_record(api_client):
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    storage.append_message(
+        conversation_id,
+        None,
+        "user",
+        "Test message",
+        user_id=user_id,
+    )
+
+    response = client.delete(
+        f"/api/v1/conversations/{conversation_id}",
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert conversation_id not in storage.conversations
+
+
+def test_delete_conversation_returns_404_for_another_user(api_client):
+    client, storage = api_client
+
+    conversation = storage.create_conversation(
+        uuid4(),
+        uuid4(),
+    )
+
+    response = client.delete(
+        f"/api/v1/conversations/{conversation['id']}",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found."
+    assert conversation["id"] in storage.conversations
+
+
+def test_delete_conversation_returns_404_for_unknown_id(api_client):
+    client, storage = api_client
+
+    response = client.delete(
+        f"/api/v1/conversations/{uuid4()}",
+    )
+
+    assert response.status_code == 404
+    assert storage.conversations == {}
+
+
+def test_delete_conversation_rejects_invalid_csrf_token(api_client):
+    client, storage = api_client
+
+    conversation = storage.create_conversation(
+        uuid4(),
+        storage.authenticated_user_id,
+    )
+
+    client.headers[auth_dependencies.CSRF_HEADER_NAME] = (
+        "incorrect-csrf-token"
+    )
+
+    response = client.delete(
+        f"/api/v1/conversations/{conversation['id']}",
+    )
+
+    assert response.status_code == 403
+    assert conversation["id"] in storage.conversations

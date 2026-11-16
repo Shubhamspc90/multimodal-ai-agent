@@ -159,6 +159,51 @@ button:focus-visible {
   padding: 0 2px;
 }
 
+.conversation-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.conversation-item {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.conversation-delete {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #8b91a5;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.conversation-delete:hover:not(:disabled) {
+  color: #dc3545;
+  background: #fff0f0;
+}
+
+.conversation-delete:focus-visible {
+  outline: 2px solid #8b7ce8;
+  outline-offset: 2px;
+}
+
+.conversation-delete:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 .conversation-item {
   display: flex;
   align-items: center;
