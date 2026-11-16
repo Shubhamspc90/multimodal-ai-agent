@@ -245,3 +245,63 @@ def test_conversation_storage_requires_an_owner(storage, database_mocks):
         )
 
     connect.assert_not_called()
+
+
+def test_delete_authenticated_conversation_removes_owned_records(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+    conversation_id = uuid4()
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.side_effect = [
+        (conversation_id,),
+        (conversation_id,),
+    ]
+
+    result = storage.delete_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert result is True
+
+    calls = cursor.execute.call_args_list
+
+    assert len(calls) == 3
+
+    ownership_query, ownership_params = calls[0].args
+    assert "WHERE id = %s AND user_id = %s" in ownership_query
+    assert "FOR UPDATE" in ownership_query
+    assert ownership_params == (conversation_id, user_id)
+
+    delete_messages_query, delete_messages_params = calls[1].args
+    assert "DELETE FROM chat_messages" in delete_messages_query
+    assert delete_messages_params == (conversation_id,)
+
+    delete_conversation_query, delete_conversation_params = calls[2].args
+    assert "DELETE FROM conversations" in delete_conversation_query
+    assert "user_id = %s" in delete_conversation_query
+    assert delete_conversation_params == (conversation_id, user_id)
+
+
+def test_delete_authenticated_conversation_rejects_unknown_owner(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+    conversation_id = uuid4()
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = None
+
+    result = storage.delete_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert result is False
+
+    assert cursor.execute.call_count == 1
+    cursor.fetchall.assert_not_called()

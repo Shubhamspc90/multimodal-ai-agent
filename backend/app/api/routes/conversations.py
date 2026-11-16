@@ -131,6 +131,35 @@ def load_conversation(
     return conversation
 
 
+@router.delete(
+    "/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_conversation(
+    conversation_id: UUID,
+    current_user: CurrentUser,
+    csrf_protection: CsrfProtection,
+    storage: Annotated[
+        PostgresChatHistoryStorage,
+        Depends(get_chat_history_storage),
+    ],
+) -> None:
+    """Delete a conversation owned by the authenticated user."""
+    try:
+        deleted = storage.delete_conversation(
+            conversation_id=conversation_id,
+            user_id=current_user["id"],
+        )
+    except (psycopg.Error, ValueError) as exc:
+        raise _database_unavailable(exc) from exc
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found.",
+        )
+
+
 @router.post(
     "/{conversation_id}/messages",
     response_model=ChatMessagePairResponse,
