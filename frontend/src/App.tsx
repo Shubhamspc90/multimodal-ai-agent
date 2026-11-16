@@ -26,7 +26,6 @@ import type {
 
 import {
   AudioLines,
-  Bot,
   LogOut,
   FileText,
   Image,
@@ -271,6 +270,9 @@ function App() {
     null,
   );
 
+  const chatMessagesRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
+
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
@@ -446,7 +448,7 @@ function App() {
     } finally {
       setIsCreatingConversation(false);
     }
-  }, [chatClientId,   deletingConversationId, isCreatingConversation, isSending]);
+  }, [chatClientId, deletingConversationId, isCreatingConversation, isSending]);
 
   const handleSelectConversation = useCallback(
     async (conversationId: string) => {
@@ -460,7 +462,7 @@ function App() {
         const conversation: ConversationDetail = await getConversation(conversationId);
 
         setActiveConversationId(conversation.id);
-
+        shouldAutoScrollRef.current = true;
         setChatMessages(
           conversation.messages.map((message) => ({
             id: message.id,
@@ -597,6 +599,7 @@ function App() {
       content: message,
     };
 
+    shouldAutoScrollRef.current = true;
     setChatMessages((previous) => [...previous, userMessage]);
     setMessageDraft("");
     setChatError("");
@@ -1399,6 +1402,21 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (activeWorkspace !== "Chat" || !shouldAutoScrollRef.current) {
+      return;
+    }
+
+    const container = chatMessagesRef.current;
+
+    if (container) {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [chatMessages, isSending, activeWorkspace]);
+
   // Restore the authenticated user when the application loads.
   useEffect(() => {
     let cancelled = false;
@@ -1696,14 +1714,6 @@ function App() {
         )}
 
         <div className="sidebar-bottom">
-          <div className="status-card">
-            <div className="status-icon"><Bot size={19} /></div>
-            <div>
-              <strong>AI workspace</strong>
-              <span>Local development</span>
-            </div>
-            <span className="status-dot" />
-          </div>
           <button
             type="button"
             className={`nav-item settings-button ${activeView === "settings" ? "active" : ""
@@ -2009,7 +2019,18 @@ function App() {
                     <span className="chat-mode-badge">AI chat</span>
                   </div>
 
-                  <div className="chat-messages" aria-live="polite">
+                  <div
+                    className="chat-messages"
+                    aria-live="polite"
+                    ref={chatMessagesRef}
+                    onScroll={(event) => {
+                      const element = event.currentTarget;
+                      const distanceFromBottom =
+                        element.scrollHeight - element.scrollTop - element.clientHeight;
+
+                      shouldAutoScrollRef.current = distanceFromBottom <= 80;
+                    }}
+                  >
                     {chatMessages.length === 0 && (
                       <p className="chat-empty">
                         Your conversation starts here. Send a message below.
@@ -2592,22 +2613,9 @@ function App() {
                 </section>
               )}
 
-              <div className="notice">
-                <div className="notice-icon"><Bot size={18} /></div>
-                <div>
-                  <strong>Workspace foundation is ready</strong>
-                  <p>
-                    Explore the available workspaces to chat with the API, process
-                    documents, analyze images, and transcribe WAV audio.
-                  </p>
-                </div>
-              </div></>
+            </>
           )}
 
-          <footer className="content-footer">
-            <span><span className="footer-dot" /> Built for multimodal workflows</span>
-            <span>React · TypeScript · FastAPI</span>
-          </footer>
         </div>
       </section>
     </main>
