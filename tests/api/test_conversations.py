@@ -486,7 +486,6 @@ def test_create_conversation_rejects_missing_csrf_header(api_client):
     assert storage.conversations == {}
 
 
-
 def test_delete_conversation_returns_no_content_and_removes_record(api_client):
     client, storage = api_client
     user_id = storage.authenticated_user_id
@@ -547,9 +546,7 @@ def test_delete_conversation_rejects_invalid_csrf_token(api_client):
         storage.authenticated_user_id,
     )
 
-    client.headers[auth_dependencies.CSRF_HEADER_NAME] = (
-        "incorrect-csrf-token"
-    )
+    client.headers[auth_dependencies.CSRF_HEADER_NAME] = "incorrect-csrf-token"
 
     response = client.delete(
         f"/api/v1/conversations/{conversation['id']}",

@@ -174,7 +174,6 @@ class PostgresChatHistoryStorage:
 
         return result
 
-
     def delete_conversation(
         self,
         conversation_id: UUID,
@@ -223,7 +222,6 @@ class PostgresChatHistoryStorage:
                 )
 
                 return cursor.fetchone() is not None
-
 
     def append_message(
         self,
