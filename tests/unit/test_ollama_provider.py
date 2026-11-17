@@ -100,3 +100,46 @@ def test_provider_requires_api_key() -> None:
 
     with pytest.raises(ValueError, match="OLLAMA_API_KEY"):
         OllamaCloudProvider(settings)
+
+
+@pytest.mark.asyncio
+async def test_generate_messages_sends_conversation_history() -> None:
+    """Send structured conversation messages to Ollama Cloud."""
+    messages = [
+        {"role": "user", "content": "Explain PostgreSQL."},
+        {"role": "assistant", "content": "It is a relational database."},
+        {"role": "user", "content": "What did I ask about?"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+
+        assert payload["messages"] == messages
+        assert payload["model"] == "gemma4:31b"
+        assert payload["stream"] is False
+
+        return httpx.Response(
+            200,
+            json={"message": {"content": "You asked about PostgreSQL."}},
+        )
+
+    provider = OllamaCloudProvider(
+        make_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await provider.generate_messages(messages)
+
+    assert result == "You asked about PostgreSQL."
+
+
+@pytest.mark.asyncio
+async def test_generate_messages_rejects_empty_history() -> None:
+    """Reject an empty conversation history before making a request."""
+    provider = OllamaCloudProvider(
+        make_settings(),
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={})),
+    )
+
+    with pytest.raises(ValueError, match="At least one"):
+        await provider.generate_messages([])

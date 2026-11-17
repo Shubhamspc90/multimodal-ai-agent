@@ -9,3 +9,10 @@ class TextModelProvider(Protocol):
     async def generate_text(self, message: str) -> str:
         """Generate a response for the supplied user message."""
         ...
+
+    async def generate_messages(
+        self,
+        messages: list[dict[str, str]],
+    ) -> str:
+        """Generate a response using structured conversation messages."""
+        ...

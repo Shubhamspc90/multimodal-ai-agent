@@ -10,6 +10,7 @@ from backend.app.api import dependencies as auth_dependencies
 from backend.app.api.routes import conversations as conversations_route
 from backend.app.main import app
 from backend.app.schemas.agent import AgentInputType, AgentRequest, AgentResponse
+from backend.app.services.ollama_provider import OllamaProviderError
 
 
 class FakeChatHistoryStorage:
@@ -94,6 +95,31 @@ class FakeChatHistoryStorage:
             **self._summary(conversation),
             "messages": list(conversation["messages"]),
         }
+
+    def get_recent_messages(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Return the latest messages for an authenticated conversation."""
+        if limit < 1:
+            raise ValueError("Message limit must be at least 1.")
+
+        conversation = self.conversations.get(conversation_id)
+
+        if conversation is None or conversation["user_id"] != user_id:
+            return []
+
+        return [
+            {
+                "id": message["id"],
+                "role": message["role"],
+                "content": message["content"],
+                "created_at": message["created_at"],
+            }
+            for message in conversation["messages"][-limit:]
+        ]
 
     def delete_conversation(
         self,
@@ -191,7 +217,16 @@ class FakeChatHistoryStorage:
 class FakeAgentService:
     """Generate deterministic AI responses without calling Ollama."""
 
-    async def process_text(self, request: AgentRequest) -> AgentResponse:
+    def __init__(self) -> None:
+        self.received_messages: list[dict[str, str]] | None = None
+
+    async def process_text(
+        self,
+        request: AgentRequest,
+        messages: list[dict[str, str]] | None = None,
+    ) -> AgentResponse:
+        self.received_messages = messages
+
         return AgentResponse(
             status="completed",
             input_type=AgentInputType.TEXT,
@@ -347,10 +382,11 @@ def test_send_conversation_message_saves_user_and_ai_messages(
     conversation = storage.create_conversation(client_id, user_id)
     conversation_id = conversation["id"]
 
+    agent_service = FakeAgentService()
     monkeypatch.setattr(
         conversations_route,
         "get_agent_service",
-        lambda: FakeAgentService(),
+        lambda: agent_service,
     )
 
     response = client.post(
@@ -380,6 +416,61 @@ def test_send_conversation_message_saves_user_and_ai_messages(
 
     assert saved_conversation is not None
     assert len(saved_conversation["messages"]) == 2
+
+    assert agent_service.received_messages == [
+        {
+            "role": "user",
+            "content": "Explain AI agents.",
+        },
+    ]
+
+
+def test_send_conversation_message_preserves_user_message_on_provider_failure(
+    api_client,
+    monkeypatch,
+):
+    client, storage = api_client
+
+    user_id = storage.authenticated_user_id
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    class FailingAgentService:
+        async def process_text(
+            self,
+            request: AgentRequest,
+            messages: list[dict[str, str]] | None = None,
+        ) -> AgentResponse:
+            raise OllamaProviderError("Simulated provider failure.")
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        lambda: FailingAgentService(),
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "Explain AI agents.",
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == (
+        "The text generation provider is temporarily unavailable."
+    )
+
+    saved_conversation = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert saved_conversation is not None
+    assert len(saved_conversation["messages"]) == 1
+    assert saved_conversation["messages"][0]["role"] == "user"
+    assert saved_conversation["messages"][0]["content"] == "Explain AI agents."
 
 
 def test_send_conversation_message_rejects_empty_message(api_client):
@@ -554,3 +645,63 @@ def test_delete_conversation_rejects_invalid_csrf_token(api_client):
 
     assert response.status_code == 403
     assert conversation["id"] in storage.conversations
+
+
+def test_send_conversation_message_uses_only_latest_twenty_messages(
+    api_client,
+    monkeypatch,
+):
+    """Send only the latest 20 persisted messages to the agent."""
+    client, storage = api_client
+
+    user_id = storage.authenticated_user_id
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    previous_messages = []
+
+    for index in range(22):
+        role = "user" if index % 2 == 0 else "assistant"
+        content = f"Historical message {index + 1}"
+
+        storage.append_message(
+            conversation_id,
+            None,
+            role,
+            content,
+            user_id=user_id,
+        )
+
+        previous_messages.append(
+            {
+                "role": role,
+                "content": content,
+            }
+        )
+
+    agent_service = FakeAgentService()
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        lambda: agent_service,
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "What happened earlier?",
+        },
+    )
+
+    assert response.status_code == 200
+
+    expected_context = previous_messages[-19:] + [
+        {
+            "role": "user",
+            "content": "What happened earlier?",
+        },
+    ]
+
+    assert agent_service.received_messages == expected_context
+    assert len(agent_service.received_messages) == 20

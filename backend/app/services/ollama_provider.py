@@ -33,14 +33,24 @@ class OllamaCloudProvider(TextModelProvider):
         self._transport = transport
 
     async def generate_text(self, message: str) -> str:
-        """Send a message to Ollama Cloud and return the model response."""
+        """Preserve single-message text generation."""
+        return await self.generate_messages([{"role": "user", "content": message}])
+
+    async def generate_messages(
+        self,
+        messages: list[dict[str, str]],
+    ) -> str:
+        """Generate a response using structured conversation messages."""
+        if not messages:
+            raise ValueError("At least one conversation message is required.")
+
         headers = {
             "Authorization": f"Bearer {self._api_key.get_secret_value()}",
             "Content-Type": "application/json",
         }
         payload = {
             "model": self._model,
-            "messages": [{"role": "user", "content": message}],
+            "messages": messages,
             "stream": False,
         }
 
@@ -59,7 +69,6 @@ class OllamaCloudProvider(TextModelProvider):
         except httpx.TimeoutException as exc:
             raise OllamaProviderError("Ollama Cloud request timed out.") from exc
         except httpx.HTTPStatusError as exc:
-            # Do not expose response bodies, which may contain sensitive details.
             raise OllamaProviderError(
                 f"Ollama Cloud returned HTTP {exc.response.status_code}."
             ) from exc
