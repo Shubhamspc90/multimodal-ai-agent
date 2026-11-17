@@ -476,6 +476,7 @@ function App() {
         );
 
         setActiveWorkspace("Chat");
+        setActiveView("workspace");
         setIsWorkspaceOpen(true);
         setSidebarOpen(false);
       } catch (error: unknown) {
