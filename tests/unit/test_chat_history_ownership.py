@@ -305,3 +305,79 @@ def test_delete_authenticated_conversation_rejects_unknown_owner(
 
     assert cursor.execute.call_count == 1
     cursor.fetchall.assert_not_called()
+
+
+def test_get_recent_messages_returns_latest_messages_chronologically(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+    conversation_id = uuid4()
+    timestamp = datetime.now(UTC)
+
+    _, _, cursor = database_mocks
+
+    # Simulate PostgreSQL returning the newest messages first.
+    cursor.fetchall.return_value = [
+        (22, "assistant", "Answer 22", timestamp),
+        (21, "user", "Question 21", timestamp),
+        (20, "assistant", "Answer 20", timestamp),
+    ]
+
+    result = storage.get_recent_messages(
+        conversation_id=conversation_id,
+        user_id=user_id,
+        limit=20,
+    )
+
+    assert [message["id"] for message in result] == [20, 21, 22]
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert [message["content"] for message in result] == [
+        "Answer 20",
+        "Question 21",
+        "Answer 22",
+    ]
+
+    query, params = cursor.execute.call_args.args
+    normalized_query = " ".join(query.split())
+
+    assert "INNER JOIN conversations" in normalized_query
+    assert "conversations.user_id = %s" in normalized_query
+    assert "ORDER BY chat_messages.id DESC" in normalized_query
+    assert "LIMIT %s" in normalized_query
+    assert params == (conversation_id, user_id, 20)
+
+
+def test_get_recent_messages_returns_empty_list_when_no_messages(
+    storage,
+    database_mocks,
+):
+    _, _, cursor = database_mocks
+    cursor.fetchall.return_value = []
+
+    result = storage.get_recent_messages(
+        conversation_id=uuid4(),
+        user_id=uuid4(),
+    )
+
+    assert result == []
+
+
+def test_get_recent_messages_rejects_invalid_limit(
+    storage,
+    database_mocks,
+):
+    connect, _, _ = database_mocks
+
+    with pytest.raises(ValueError, match="limit"):
+        storage.get_recent_messages(
+            conversation_id=uuid4(),
+            user_id=uuid4(),
+            limit=0,
+        )
+
+    connect.assert_not_called()

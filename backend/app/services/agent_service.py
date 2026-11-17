@@ -21,14 +21,21 @@ class AgentService:
         self._text_provider = text_provider
         self._tool_router = tool_router or ToolRouter()
 
-    async def process_text(self, request: AgentRequest) -> AgentResponse:
+    async def process_text(
+        self,
+        request: AgentRequest,
+        messages: list[dict[str, str]] | None = None,
+    ) -> AgentResponse:
         """Route a text request and normalize its provider response."""
         decision = self._tool_router.route(AgentInputType.TEXT)
 
         if decision.tool != ToolName.TEXT_GENERATION:
             raise ValueError(f"Unsupported tool for text input: {decision.tool}")
 
-        generated_text = await self._text_provider.generate_text(request.message)
+        if messages is None:
+            generated_text = await self._text_provider.generate_text(request.message)
+        else:
+            generated_text = await self._text_provider.generate_messages(messages)
 
         if not generated_text or not generated_text.strip():
             raise ValueError("The text model returned an empty response.")

@@ -23,6 +23,25 @@ class EmptyTextProvider:
         return "   "
 
 
+class ConversationTextProvider:
+    """Track structured conversation messages sent to the provider."""
+
+    def __init__(self) -> None:
+        self.received_messages: list[dict[str, str]] | None = None
+        self.generate_text_called = False
+
+    async def generate_text(self, message: str) -> str:
+        self.generate_text_called = True
+        return f"Processed: {message}"
+
+    async def generate_messages(
+        self,
+        messages: list[dict[str, str]],
+    ) -> str:
+        self.received_messages = messages
+        return "Processed conversation history."
+
+
 @pytest.mark.asyncio
 async def test_process_text_returns_standardized_response() -> None:
     """Convert provider output into the agent response contract."""
@@ -79,3 +98,25 @@ async def test_process_text_rejects_incompatible_tool_before_provider_call() -> 
         await service.process_text(AgentRequest(message="Hello"))
 
     assert provider.called is False
+
+
+@pytest.mark.asyncio
+async def test_process_text_uses_conversation_messages_when_provided() -> None:
+    """Use structured history instead of the single-message provider method."""
+    provider = ConversationTextProvider()
+    service = AgentService(text_provider=provider)
+
+    messages = [
+        {"role": "user", "content": "Explain PostgreSQL."},
+        {"role": "assistant", "content": "It is a relational database."},
+        {"role": "user", "content": "What did I ask about?"},
+    ]
+
+    response = await service.process_text(
+        AgentRequest(message="What did I ask about?"),
+        messages=messages,
+    )
+
+    assert response.response == "Processed conversation history."
+    assert provider.received_messages == messages
+    assert provider.generate_text_called is False

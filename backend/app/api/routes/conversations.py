@@ -22,6 +22,7 @@ from backend.app.schemas.chat_history import (
 from backend.app.services.agent_service import AgentService
 from backend.app.services.chat_history import PostgresChatHistoryStorage
 from backend.app.services.ollama_provider import OllamaProviderError
+from backend.app.services.short_term_memory import ShortTermMemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +196,19 @@ async def send_conversation_message(
         )
 
     try:
+        memory_service = ShortTermMemoryService(storage)
+        context = memory_service.get_context(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+    except (psycopg.Error, ValueError) as exc:
+        raise _database_unavailable(exc) from exc
+
+    try:
         service: AgentService = get_agent_service()
         agent_response = await service.process_text(
-            AgentRequest(message=request.message)
+            AgentRequest(message=request.message),
+            messages=context,
         )
     except HTTPException:
         # Preserve the saved user message so it can be recovered.

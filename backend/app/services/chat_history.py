@@ -174,6 +174,48 @@ class PostgresChatHistoryStorage:
 
         return result
 
+    def get_recent_messages(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Return the latest messages from a conversation owned by the user."""
+        if limit < 1:
+            raise ValueError("Message limit must be at least 1.")
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT
+                        chat_messages.id,
+                        chat_messages.role,
+                        chat_messages.content,
+                        chat_messages.created_at
+                    FROM chat_messages
+                    INNER JOIN conversations
+                        ON conversations.id = chat_messages.conversation_id
+                    WHERE conversations.id = %s
+                      AND conversations.user_id = %s
+                    ORDER BY chat_messages.id DESC
+                    LIMIT %s
+                    """,
+                    (conversation_id, user_id, limit),
+                )
+                rows = cursor.fetchall()
+
+        # The query returns newest-first; the model needs chronological order.
+        return [
+            {
+                "id": row[0],
+                "role": row[1],
+                "content": row[2],
+                "created_at": row[3],
+            }
+            for row in reversed(rows)
+        ]
+
     def delete_conversation(
         self,
         conversation_id: UUID,
