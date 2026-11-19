@@ -235,8 +235,20 @@ class FakeAgentService:
         )
 
 
+class FakeLongTermMemoryRetriever:
+    """Return no memories by default in conversation API tests."""
+
+    def retrieve_memories(
+        self,
+        user_id: UUID,
+        query: str,
+        limit: int = 5,
+    ) -> list[dict]:
+        return []
+
+
 @pytest.fixture
-def api_client():
+def api_client(monkeypatch):
     """Create an API client with isolated storage and authenticated user."""
     storage = FakeChatHistoryStorage()
 
@@ -249,6 +261,12 @@ def api_client():
 
     app.dependency_overrides[conversations_route.get_chat_history_storage] = lambda: (
         storage
+    )
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_retriever",
+        lambda: FakeLongTermMemoryRetriever(),
     )
 
     csrf_token = "conversation-test-csrf-token"
@@ -423,6 +441,152 @@ def test_send_conversation_message_saves_user_and_ai_messages(
             "content": "Explain AI agents.",
         },
     ]
+
+
+def test_send_conversation_message_includes_relevant_long_term_memories(
+    api_client,
+    monkeypatch,
+):
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    agent_service = FakeAgentService()
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        lambda: agent_service,
+    )
+
+    class RecordingRetriever:
+        def __init__(self):
+            self.received_user_id = None
+            self.received_query = None
+
+        def retrieve_memories(
+            self,
+            user_id: UUID,
+            query: str,
+            limit: int = 5,
+        ) -> list[dict]:
+            self.received_user_id = user_id
+            self.received_query = query
+
+            return [
+                {
+                    "category": "preference",
+                    "memory_text": "Prefers concise technical explanations.",
+                },
+            ]
+
+    retriever = RecordingRetriever()
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_retriever",
+        lambda: retriever,
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "Explain AI agents.",
+        },
+    )
+
+    assert response.status_code == 200
+
+    assert retriever.received_user_id == user_id
+    assert retriever.received_query == "Explain AI agents."
+
+    received_messages = agent_service.received_messages
+
+    assert received_messages is not None
+    assert received_messages[0]["role"] == "system"
+    assert "untrusted reference data" in received_messages[0]["content"]
+    assert (
+        "Prefers concise technical explanations." in (received_messages[0]["content"])
+    )
+
+    assert received_messages[1:] == [
+        {
+            "role": "user",
+            "content": "Explain AI agents.",
+        },
+    ]
+
+    saved_conversation = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert saved_conversation is not None
+    assert len(saved_conversation["messages"]) == 2
+
+
+def test_send_conversation_message_continues_when_memory_retrieval_fails(
+    api_client,
+    monkeypatch,
+):
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    agent_service = FakeAgentService()
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        lambda: agent_service,
+    )
+
+    class FailingRetriever:
+        def retrieve_memories(
+            self,
+            user_id: UUID,
+            query: str,
+            limit: int = 5,
+        ) -> list[dict]:
+            raise RuntimeError("Simulated memory retrieval failure.")
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_retriever",
+        lambda: FailingRetriever(),
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "Explain AI agents.",
+        },
+    )
+
+    assert response.status_code == 200
+
+    assert agent_service.received_messages == [
+        {
+            "role": "user",
+            "content": "Explain AI agents.",
+        },
+    ]
+
+    saved_conversation = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert saved_conversation is not None
+    assert len(saved_conversation["messages"]) == 2
+    assert saved_conversation["messages"][0]["role"] == "user"
+    assert saved_conversation["messages"][1]["role"] == "assistant"
 
 
 def test_send_conversation_message_preserves_user_message_on_provider_failure(
