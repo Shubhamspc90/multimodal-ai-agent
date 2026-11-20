@@ -1773,20 +1773,22 @@ function App() {
             >
               <Menu size={20} />
             </button>
-            {activeView === "workspace" && isWorkspaceOpen && (
-              <button
-                type="button"
-                className="breadcrumb-home"
-                onClick={() => {
-                  if (voiceRecordingStatus === "recording") {
-                    handleCancelVoiceRecording();
-                  }
-                  setIsWorkspaceOpen(false);
-                }}
-              >
-                Home
-              </button>
-            )}
+            {((activeView === "workspace" && isWorkspaceOpen) ||
+              activeView === "settings") && (
+                <button
+                  type="button"
+                  className="breadcrumb-home"
+                  onClick={() => {
+                    if (voiceRecordingStatus === "recording") {
+                      handleCancelVoiceRecording();
+                    }
+                    setIsWorkspaceOpen(false);
+                    setActiveView("workspace");
+                  }}
+                >
+                  Home
+                </button>
+              )}
             <span>Workspace</span>
             <span className="breadcrumb-separator">/</span>
             <strong>
