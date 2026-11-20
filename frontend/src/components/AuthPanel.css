@@ -321,3 +321,35 @@
     font-size: 25px;
   }
 }
+
+.auth-password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-password-wrapper input {
+  padding-right: 65px;
+}
+
+.auth-password-wrapper .password-visibility-toggle {
+  position: absolute;
+  right: 12px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: #a5b4fc;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-password-wrapper .password-visibility-toggle:hover:not(:disabled) {
+  color: #c7d2fe;
+}
+
+.auth-password-wrapper .password-visibility-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

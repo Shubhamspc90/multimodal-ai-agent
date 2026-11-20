@@ -23,7 +23,7 @@ export default function AuthPanel({
   const [password, setPassword] = useState("");
   const [error, setError] = useState(initialError);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
+  const [showPassword, setShowPassword] = useState(false);
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -64,6 +64,7 @@ export default function AuthPanel({
     setMode(nextMode);
     setError("");
     setPassword("");
+    setShowPassword(false);
   };
 
   return (
@@ -121,21 +122,33 @@ export default function AuthPanel({
 
           <label>
             <span>Password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter your password"
-              autoComplete={
-                mode === "login" ? "current-password" : "new-password"
-              }
-              minLength={8}
-              maxLength={128}
-              required
-              disabled={isSubmitting}
-            />
-          </label>
 
+            <div className="auth-password-wrapper">
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter your password"
+                autoComplete={
+                  mode === "login" ? "current-password" : "new-password"
+                }
+                minLength={8}
+                maxLength={128}
+                required
+                disabled={isSubmitting}
+              />
+
+              <button
+                type="button"
+                className="password-visibility-toggle"
+                onClick={() => setShowPassword((previous) => !previous)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                disabled={isSubmitting}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+          </label>
           <button
             className="auth-submit"
             type="submit"
