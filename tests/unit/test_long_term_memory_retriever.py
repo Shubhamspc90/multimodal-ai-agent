@@ -198,3 +198,171 @@ def test_retriever_initializes_default_dependencies():
     assert isinstance(retriever._embedding_service, EmbeddingService)
     assert isinstance(retriever._memory_storage, LongTermMemoryStorage)
     assert retriever._embedding_service._model is None
+
+
+def test_retrieve_memories_decomposes_multi_part_questions():
+    """Search independent parts of a multi-part question."""
+    user_id = uuid4()
+    embedding_service = Mock(spec=EmbeddingService)
+    embedding_service.embed_text.side_effect = [
+        [0.1] * 384,
+        [0.2] * 384,
+        [0.3] * 384,
+        [0.4] * 384,
+        [0.5] * 384,
+        [0.6] * 384,
+    ]
+
+    memory_storage = Mock(spec=LongTermMemoryStorage)
+    memory_storage.search_memories.side_effect = [
+        [
+            {"id": "python", "memory_text": "Uses Python", "distance": 0.3512},
+        ],
+        [
+            {"id": "python", "memory_text": "Uses Python", "distance": 0.20},
+        ],
+        [
+            {
+                "id": "project",
+                "memory_text": "Developing a Multimodal AI Agent",
+                "distance": 0.30,
+            },
+        ],
+        [],
+        [],
+        [
+            {
+                "id": "database",
+                "memory_text": "Prefers PostgreSQL",
+                "distance": 0.25,
+            },
+        ],
+    ]
+
+    retriever = LongTermMemoryRetriever(
+        embedding_service=embedding_service,
+        memory_storage=memory_storage,
+    )
+
+    results = retriever.retrieve_memories(
+        user_id=user_id,
+        query=(
+            "What is my favourite programming language, "
+            "which project am I developing, "
+            "and which database do I prefer?"
+        ),
+    )
+
+    assert {memory["memory_text"] for memory in results} == {
+        "Uses Python",
+        "Developing a Multimodal AI Agent",
+        "Prefers PostgreSQL",
+    }
+
+    assert len(results) == 3
+    assert results[0]["distance"] == 0.20
+    assert embedding_service.embed_text.call_count == 6
+    assert memory_storage.search_memories.call_count == 6
+
+    for call in memory_storage.search_memories.call_args_list:
+        assert call.kwargs["user_id"] == user_id
+        assert call.kwargs["limit"] == 5
+
+
+def test_build_search_queries_adds_project_query_variants():
+    """Generate generic alternatives for project-related question parts."""
+    query = (
+        "What is my favourite programming language, "
+        "which project am I developing, "
+        "and which database do I prefer?"
+    )
+
+    queries = LongTermMemoryRetriever._build_search_queries(query)
+
+    assert queries == [
+        query,
+        "What is my favourite programming language",
+        "which project am I developing",
+        "What project am I currently developing?",
+        "What project am I working on?",
+        "which database do I prefer?",
+    ]
+
+
+def test_retrieve_memories_keeps_best_distance_for_duplicate_memories():
+    """Keep the best relevance score when searches return the same memory."""
+    user_id = uuid4()
+    embedding_service = Mock(spec=EmbeddingService)
+    memory_storage = Mock(spec=LongTermMemoryStorage)
+
+    memory_storage.search_memories.side_effect = [
+        [{"id": "memory-1", "memory_text": "Uses Python", "distance": 0.4}],
+        [{"id": "memory-1", "memory_text": "Uses Python", "distance": 0.2}],
+        [{"id": "memory-2", "memory_text": "Prefers PostgreSQL", "distance": 0.3}],
+    ]
+
+    retriever = LongTermMemoryRetriever(
+        embedding_service=embedding_service,
+        memory_storage=memory_storage,
+    )
+
+    results = retriever.retrieve_memories(
+        user_id,
+        "What language do I use, and which database do I prefer?",
+    )
+
+    assert len(results) == 2
+    assert results[0]["memory_text"] == "Uses Python"
+    assert results[0]["distance"] == 0.2
+
+
+def test_retrieve_memories_respects_final_result_limit():
+    """Apply the requested limit after combining all query results."""
+    embedding_service = Mock(spec=EmbeddingService)
+    memory_storage = Mock(spec=LongTermMemoryStorage)
+
+    memory_storage.search_memories.side_effect = [
+        [{"id": "a", "memory_text": "Memory A", "distance": 0.2}],
+        [{"id": "b", "memory_text": "Memory B", "distance": 0.3}],
+        [{"id": "c", "memory_text": "Memory C", "distance": 0.1}],
+        [],
+        [],
+    ]
+
+    retriever = LongTermMemoryRetriever(
+        embedding_service=embedding_service,
+        memory_storage=memory_storage,
+    )
+
+    results = retriever.retrieve_memories(
+        uuid4(),
+        "What is my preference, and which project am I developing?",
+        limit=2,
+    )
+
+    assert [memory["memory_text"] for memory in results] == [
+        "Memory C",
+        "Memory A",
+    ]
+
+
+def test_retrieve_memories_does_not_decompose_single_part_questions():
+    """Preserve single-query behavior for ordinary questions."""
+    embedding_service = Mock(spec=EmbeddingService)
+    memory_storage = Mock(spec=LongTermMemoryStorage)
+    memory_storage.search_memories.return_value = []
+
+    retriever = LongTermMemoryRetriever(
+        embedding_service=embedding_service,
+        memory_storage=memory_storage,
+    )
+
+    retriever.retrieve_memories(
+        uuid4(),
+        "What programming language do I prefer?",
+    )
+
+    embedding_service.embed_text.assert_called_once_with(
+        "What programming language do I prefer?"
+    )
+    memory_storage.search_memories.assert_called_once()

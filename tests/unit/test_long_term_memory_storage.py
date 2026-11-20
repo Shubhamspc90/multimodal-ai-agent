@@ -388,3 +388,134 @@ def test_schema_initialization_propagates_database_errors(storage):
             storage._ensure_schema()
 
     assert storage._schema_ready is False
+
+
+def test_store_memory_if_new_inserts_when_no_duplicate_exists(
+    storage: LongTermMemoryStorage,
+    database_mocks,
+) -> None:
+    """Insert a memory after acquiring the lock and finding no duplicate."""
+    _, _, _, cursor = database_mocks
+    storage._schema_ready = True
+
+    user_id = uuid4()
+    memory_id = uuid4()
+    memory_text = "I prefer Python"
+    embedding = [0.1] * storage.EMBEDDING_DIMENSIONS
+
+    cursor.fetchone.side_effect = [
+        None,  # No existing duplicate.
+        (
+            memory_id,
+            user_id,
+            memory_text,
+            "preference",
+            None,
+            None,
+        ),
+    ]
+
+    result = storage.store_memory_if_new(
+        user_id=user_id,
+        memory_text=memory_text,
+        category="preference",
+        embedding=embedding,
+    )
+
+    assert result is not None
+    assert result["id"] == memory_id
+    assert result["user_id"] == user_id
+    assert result["memory_text"] == memory_text
+    assert result["category"] == "preference"
+
+    assert cursor.execute.call_count == 3
+
+    lock_sql = cursor.execute.call_args_list[0].args[0]
+    duplicate_sql = cursor.execute.call_args_list[1].args[0]
+    insert_sql = cursor.execute.call_args_list[2].args[0]
+
+    assert "pg_advisory_xact_lock" in lock_sql
+    assert "WHERE user_id = %s" in duplicate_sql
+    assert "AND category = %s" in duplicate_sql
+    assert "INSERT INTO long_term_memories" in insert_sql
+
+    duplicate_params = cursor.execute.call_args_list[1].args[1]
+    assert duplicate_params == (
+        user_id,
+        "preference",
+        "i prefer python",
+    )
+
+
+def test_store_memory_if_new_skips_existing_duplicate(
+    storage: LongTermMemoryStorage,
+    database_mocks,
+) -> None:
+    """Do not insert a memory when an equivalent record already exists."""
+    _, _, _, cursor = database_mocks
+    storage._schema_ready = True
+
+    user_id = uuid4()
+    existing_memory_id = uuid4()
+    embedding = [0.1] * storage.EMBEDDING_DIMENSIONS
+
+    cursor.fetchone.return_value = (existing_memory_id,)
+
+    result = storage.store_memory_if_new(
+        user_id=user_id,
+        memory_text="  I prefer   Python  ",
+        category="preference",
+        embedding=embedding,
+    )
+
+    assert result is None
+
+    # Lock acquisition and duplicate lookup only; no INSERT.
+    assert cursor.execute.call_count == 2
+
+    duplicate_params = cursor.execute.call_args_list[1].args[1]
+    assert duplicate_params == (
+        user_id,
+        "preference",
+        "i prefer python",
+    )
+
+
+def test_store_memory_if_new_scopes_duplicate_check_to_user_and_category(
+    storage: LongTermMemoryStorage,
+    database_mocks,
+) -> None:
+    """Check duplicates using both the owning user and memory category."""
+    _, _, _, cursor = database_mocks
+    storage._schema_ready = True
+
+    user_id = uuid4()
+    memory_id = uuid4()
+    embedding = [0.1] * storage.EMBEDDING_DIMENSIONS
+
+    cursor.fetchone.side_effect = [
+        None,
+        (
+            memory_id,
+            user_id,
+            "I am developing a Multimodal AI Agent",
+            "project",
+            None,
+            None,
+        ),
+    ]
+
+    storage.store_memory_if_new(
+        user_id=user_id,
+        memory_text="I am developing a Multimodal AI Agent",
+        category="project",
+        embedding=embedding,
+    )
+
+    duplicate_sql = cursor.execute.call_args_list[1].args[0]
+    duplicate_params = cursor.execute.call_args_list[1].args[1]
+
+    assert "WHERE user_id = %s" in duplicate_sql
+    assert "AND category = %s" in duplicate_sql
+    assert duplicate_params[0] == user_id
+    assert duplicate_params[1] == "project"

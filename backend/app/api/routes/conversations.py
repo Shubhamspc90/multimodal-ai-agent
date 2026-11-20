@@ -23,9 +23,15 @@ from backend.app.schemas.chat_history import (
 )
 from backend.app.services.agent_service import AgentService
 from backend.app.services.chat_history import PostgresChatHistoryStorage
+from backend.app.services.embedding_service import EmbeddingService
+from backend.app.services.long_term_memory_capture import LongTermMemoryCapture
+from backend.app.services.long_term_memory_extractor import (
+    LongTermMemoryExtractor,
+)
 from backend.app.services.long_term_memory_retriever import (
     LongTermMemoryRetriever,
 )
+from backend.app.services.long_term_memory_storage import LongTermMemoryStorage
 from backend.app.services.ollama_provider import OllamaProviderError
 from backend.app.services.short_term_memory import ShortTermMemoryService
 
@@ -40,9 +46,35 @@ def get_chat_history_storage() -> PostgresChatHistoryStorage:
     return PostgresChatHistoryStorage()
 
 
+@lru_cache
+def get_long_term_memory_embedding_service() -> EmbeddingService:
+    """Return the shared embedding service."""
+    return EmbeddingService()
+
+
+@lru_cache
+def get_long_term_memory_storage() -> LongTermMemoryStorage:
+    """Return the shared long-term memory storage service."""
+    return LongTermMemoryStorage()
+
+
 def get_long_term_memory_retriever() -> LongTermMemoryRetriever:
     """Create the long-term memory retrieval service."""
-    return LongTermMemoryRetriever()
+    return LongTermMemoryRetriever(
+        embedding_service=get_long_term_memory_embedding_service(),
+        memory_storage=get_long_term_memory_storage(),
+    )
+
+
+def get_long_term_memory_capture_service(
+    agent_service: AgentService,
+) -> LongTermMemoryCapture:
+    """Build memory capture using the configured chat provider."""
+    return LongTermMemoryCapture(
+        extractor=LongTermMemoryExtractor(agent_service.text_provider),
+        embedding_service=get_long_term_memory_embedding_service(),
+        memory_storage=get_long_term_memory_storage(),
+    )
 
 
 def _database_unavailable(exc: Exception) -> HTTPException:
@@ -214,6 +246,15 @@ async def send_conversation_message(
     except (psycopg.Error, ValueError) as exc:
         raise _database_unavailable(exc) from exc
 
+    capture_context = [
+        {
+            "role": message["role"],
+            "content": message["content"],
+        }
+        for message in context
+        if message.get("role") in {"user", "assistant"}
+    ]
+
     try:
         retriever = get_long_term_memory_retriever()
         memories = await run_in_threadpool(
@@ -290,6 +331,29 @@ async def send_conversation_message(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found.",
+        )
+
+    try:
+        capture_service = get_long_term_memory_capture_service(service)
+
+        capture_messages = [
+            *capture_context,
+            {
+                "role": "assistant",
+                "content": agent_response.response,
+            },
+        ]
+
+        await capture_service.capture_memories(
+            user_id=user_id,
+            messages=capture_messages,
+        )
+
+    except Exception:
+        logger.warning(
+            "Automatic long-term memory capture failed; "
+            "continuing with the successful chat response.",
+            exc_info=True,
         )
 
     return {
