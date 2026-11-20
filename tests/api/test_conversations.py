@@ -247,6 +247,17 @@ class FakeLongTermMemoryRetriever:
         return []
 
 
+class FakeLongTermMemoryCaptureService:
+    """Skip automatic memory capture in unrelated API tests."""
+
+    async def capture_memories(
+        self,
+        user_id: UUID,
+        messages: list[dict[str, str]],
+    ) -> list[dict]:
+        return []
+
+
 @pytest.fixture
 def api_client(monkeypatch):
     """Create an API client with isolated storage and authenticated user."""
@@ -267,6 +278,12 @@ def api_client(monkeypatch):
         conversations_route,
         "get_long_term_memory_retriever",
         lambda: FakeLongTermMemoryRetriever(),
+    )
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_capture_service",
+        lambda agent_service: FakeLongTermMemoryCaptureService(),
     )
 
     csrf_token = "conversation-test-csrf-token"
@@ -869,3 +886,193 @@ def test_send_conversation_message_uses_only_latest_twenty_messages(
 
     assert agent_service.received_messages == expected_context
     assert len(agent_service.received_messages) == 20
+
+
+def test_send_conversation_message_captures_only_conversation_messages(
+    api_client,
+    monkeypatch,
+):
+    """Capture conversation messages without injected system memory."""
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    agent_service = FakeAgentService()
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        lambda: agent_service,
+    )
+
+    class RecordingCaptureService:
+        def __init__(self):
+            self.received_user_id = None
+            self.received_messages = None
+
+        async def capture_memories(self, user_id, messages):
+            self.received_user_id = user_id
+            self.received_messages = messages
+            return []
+
+    capture_service = RecordingCaptureService()
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_capture_service",
+        lambda agent_service: capture_service,
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "My favourite programming language is Python.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert capture_service.received_user_id == user_id
+
+    captured_messages = capture_service.received_messages
+
+    assert captured_messages is not None
+    assert captured_messages[0] == {
+        "role": "user",
+        "content": "My favourite programming language is Python.",
+    }
+    assert all(
+        message["role"] in {"user", "assistant"} for message in captured_messages
+    )
+    assert captured_messages[-1]["role"] == "assistant"
+
+
+def test_send_conversation_message_excludes_retrieved_memories_from_capture(
+    api_client,
+    monkeypatch,
+):
+    """Retrieved system memories must not enter automatic memory capture."""
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    agent_service = FakeAgentService()
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        lambda: agent_service,
+    )
+
+    class MemoryReturningRetriever:
+        def retrieve_memories(self, user_id, query, limit=5):
+            return [
+                {
+                    "memory_text": "I prefer Python",
+                    "category": "preference",
+                    "distance": 0.1,
+                }
+            ]
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_retriever",
+        lambda: MemoryReturningRetriever(),
+    )
+
+    class RecordingCaptureService:
+        def __init__(self):
+            self.received_user_id = None
+            self.received_messages = None
+
+        async def capture_memories(self, user_id, messages):
+            self.received_user_id = user_id
+            self.received_messages = messages
+            return []
+
+    capture_service = RecordingCaptureService()
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_capture_service",
+        lambda agent_service: capture_service,
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "What programming language do I prefer?",
+        },
+    )
+
+    assert response.status_code == 200
+
+    # The assistant must receive the retrieved memory as context.
+    assert agent_service.received_messages is not None
+    assert any(
+        "I prefer Python" in message["content"]
+        for message in agent_service.received_messages
+    )
+
+    # Capture must receive only the actual conversation messages.
+    assert capture_service.received_user_id == user_id
+    assert capture_service.received_messages is not None
+    assert all(
+        message["role"] in {"user", "assistant"}
+        for message in capture_service.received_messages
+    )
+    assert not any(
+        "I prefer Python" in message["content"]
+        for message in capture_service.received_messages
+    )
+
+
+def test_send_conversation_message_continues_when_memory_capture_fails(
+    api_client,
+    monkeypatch,
+):
+    """A memory capture failure must not fail a successful chat response."""
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        lambda: FakeAgentService(),
+    )
+
+    class FailingCaptureService:
+        async def capture_memories(self, user_id, messages):
+            raise RuntimeError("Simulated memory capture failure.")
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_capture_service",
+        lambda agent_service: FailingCaptureService(),
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "I prefer PostgreSQL.",
+        },
+    )
+
+    assert response.status_code == 200
+
+    saved_conversation = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert saved_conversation is not None
+    assert len(saved_conversation["messages"]) == 2
+    assert saved_conversation["messages"][0]["role"] == "user"
+    assert saved_conversation["messages"][1]["role"] == "assistant"

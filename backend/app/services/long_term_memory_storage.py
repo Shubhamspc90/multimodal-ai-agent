@@ -177,6 +177,89 @@ class LongTermMemoryStorage:
 
         return self._memory_dict(row)
 
+    def store_memory_if_new(
+        self,
+        user_id: UUID,
+        memory_text: str,
+        category: str,
+        embedding: Sequence[float],
+    ) -> dict[str, Any] | None:
+        """Store a memory only if an equivalent user-owned record does not exist."""
+        normalized_text = self._validate_memory_text(memory_text)
+        normalized_category = self._validate_category(category)
+        memory_vector = self._validate_embedding(embedding)
+        comparison_text = " ".join(normalized_text.lower().split())
+        memory_id = uuid4()
+
+        self._ensure_schema()
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT pg_advisory_xact_lock(
+                        hashtextextended(%s, 0)
+                    )
+                    """,
+                    (str(user_id),),
+                )
+
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM long_term_memories
+                    WHERE user_id = %s
+                      AND category = %s
+                      AND lower(
+                          regexp_replace(
+                              btrim(memory_text),
+                              '[[:space:]]+',
+                              ' ',
+                              'g'
+                          )
+                      ) = %s
+                    LIMIT 1
+                    """,
+                    (user_id, normalized_category, comparison_text),
+                )
+
+                if cursor.fetchone() is not None:
+                    return None
+
+                cursor.execute(
+                    """
+                    INSERT INTO long_term_memories (
+                        id,
+                        user_id,
+                        memory_text,
+                        category,
+                        embedding
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING
+                        id,
+                        user_id,
+                        memory_text,
+                        category,
+                        created_at,
+                        updated_at
+                    """,
+                    (
+                        memory_id,
+                        user_id,
+                        normalized_text,
+                        normalized_category,
+                        memory_vector,
+                    ),
+                )
+
+                row = cursor.fetchone()
+
+        if row is None:
+            raise RuntimeError("The database did not return the stored memory.")
+
+        return self._memory_dict(row)
+
     def search_memories(
         self,
         user_id: UUID,

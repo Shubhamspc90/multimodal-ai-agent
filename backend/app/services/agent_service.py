@@ -21,6 +21,11 @@ class AgentService:
         self._text_provider = text_provider
         self._tool_router = tool_router or ToolRouter()
 
+    @property
+    def text_provider(self) -> TextModelProvider:
+        """Expose the configured text provider for other services."""
+        return self._text_provider
+
     async def process_text(
         self,
         request: AgentRequest,
