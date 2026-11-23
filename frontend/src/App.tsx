@@ -296,6 +296,11 @@ function App() {
 
   const [openConversationMenuId, setOpenConversationMenuId] =
     useState<string | null>(null);
+
+  const [isConversationSearchOpen, setIsConversationSearchOpen] = useState(false);
+  const [conversationSearchQuery, setConversationSearchQuery] = useState("");
+  const conversationSearchInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => {
     if (!openConversationMenuId) return;
 
@@ -322,6 +327,30 @@ function App() {
       document.removeEventListener("keydown", handleEscape);
     };
   }, [openConversationMenuId]);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === "k"
+      ) {
+        event.preventDefault();
+        setOpenConversationMenuId(null);
+        setIsConversationSearchOpen(true);
+      }
+
+      if (event.key === "Escape" && isConversationSearchOpen) {
+        setIsConversationSearchOpen(false);
+        setConversationSearchQuery("");
+      }
+    };
+
+    document.addEventListener("keydown", handleGlobalKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, [isConversationSearchOpen]);
 
   const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
   const [documentQuestion, setDocumentQuestion] = useState("");
@@ -1689,6 +1718,23 @@ function App() {
     );
   }
 
+  const searchTerms = conversationSearchQuery
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const searchCandidates = [
+    ...conversations.filter((conversation) => conversation.pinned_at !== null),
+    ...conversations.filter((conversation) => conversation.pinned_at === null),
+  ];
+
+  const filteredSearchConversations = searchCandidates.filter((conversation) => {
+    const title = conversation.title.toLowerCase();
+
+    return searchTerms.every((term) => title.includes(term));
+  });
+
   const renderConversationRow = (conversation: ConversationSummary) => {
     const isPinned = conversation.pinned_at !== null;
     const isMenuOpen = openConversationMenuId === conversation.id;
@@ -1704,8 +1750,8 @@ function App() {
         <button
           type="button"
           className={`conversation-item ${activeConversationId === conversation.id
-              ? "conversation-item-active"
-              : ""
+            ? "conversation-item-active"
+            : ""
             }`}
           aria-current={
             activeConversationId === conversation.id ? "true" : undefined
@@ -1989,7 +2035,16 @@ function App() {
                 </button>
               )}
             </div>
-            <button className="icon-button" aria-label="Search workspace">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Search conversations"
+              title="Search conversations (Ctrl+K)"
+              onClick={() => {
+                setOpenConversationMenuId(null);
+                setIsConversationSearchOpen(true);
+              }}
+            >
               <Search size={18} />
             </button>
           </div>
@@ -2835,6 +2890,130 @@ function App() {
 
         </div>
       </section>
+      {isConversationSearchOpen && (
+        <div
+          className="conversation-search-overlay"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsConversationSearchOpen(false);
+              setConversationSearchQuery("");
+            }
+          }}
+        >
+          <section
+            className="conversation-search-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="conversation-search-title"
+          >
+            <div className="conversation-search-header">
+              <div>
+                <h2 id="conversation-search-title">Search conversations</h2>
+                <p>Find a conversation by its title or keywords.</p>
+              </div>
+
+              <button
+                type="button"
+                className="conversation-search-close"
+                aria-label="Close search"
+                onClick={() => {
+                  setIsConversationSearchOpen(false);
+                  setConversationSearchQuery("");
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="conversation-search-input-wrap">
+              <Search size={18} />
+
+              <input
+                ref={conversationSearchInputRef}
+                type="text"
+                autoFocus
+                value={conversationSearchQuery}
+                onChange={(event) => setConversationSearchQuery(event.target.value)}
+                placeholder="Search conversations..."
+                aria-label="Search conversation titles"
+              />
+
+              <kbd>ESC</kbd>
+            </div>
+
+            <div className="conversation-search-results">
+              {filteredSearchConversations.length > 0 ? (
+                <>
+                  <div className="conversation-search-results-heading">
+                    {searchTerms.length > 0
+                      ? `${filteredSearchConversations.length} matching conversations`
+                      : "Your conversations"}
+                  </div>
+
+                  {filteredSearchConversations.map((conversation) => (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      className={`conversation-search-result ${activeConversationId === conversation.id
+                        ? "conversation-search-result-active"
+                        : ""
+                        }`}
+                      disabled={
+                        isLoadingConversation ||
+                        isSending ||
+                        Boolean(deletingConversationId) ||
+                        Boolean(pinningConversationId)
+                      }
+                      onClick={() => {
+                        setIsConversationSearchOpen(false);
+                        setConversationSearchQuery("");
+                        void handleSelectConversation(conversation.id);
+                      }}
+                    >
+                      <span className="conversation-search-result-icon">
+                        <MessageSquare size={17} />
+                      </span>
+
+                      <span className="conversation-search-result-details">
+                        <span className="conversation-search-result-title">
+                          {conversation.title || "Untitled conversation"}
+                        </span>
+
+                        <span className="conversation-search-result-category">
+                          {conversation.pinned_at !== null ? "Pinned" : "Recent"}
+                        </span>
+                      </span>
+
+                      <span className="conversation-search-result-arrow">↗</span>
+                    </button>
+                  ))}
+                </>
+              ) : (
+                <div className="conversation-search-empty">
+                  <Search size={26} />
+
+                  <strong>
+                    {conversations.length === 0
+                      ? "No conversations yet"
+                      : "No conversations found"}
+                  </strong>
+
+                  <p>
+                    {conversations.length === 0
+                      ? "Your conversations will appear here."
+                      : "Try another title or different keywords."}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="conversation-search-footer">
+              <span>Searches conversation titles</span>
+              <span>Ctrl + K / Cmd + K</span>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
