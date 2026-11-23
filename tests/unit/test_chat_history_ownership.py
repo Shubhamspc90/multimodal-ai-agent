@@ -54,6 +54,7 @@ def test_create_authenticated_conversation_sets_user_id(
         "New conversation",
         timestamp,
         timestamp,
+        None,
     )
 
     result = storage.create_conversation(client_id, user_id)
@@ -89,6 +90,7 @@ def test_list_authenticated_conversations_filters_by_user(
             "Private conversation",
             timestamp,
             timestamp,
+            None,
         )
     ]
 
@@ -139,6 +141,7 @@ def test_get_authenticated_conversation_checks_user_ownership(
         "Private conversation",
         timestamp,
         timestamp,
+        None,
     )
     cursor.fetchall.return_value = [(1, "user", "Hello", timestamp)]
 

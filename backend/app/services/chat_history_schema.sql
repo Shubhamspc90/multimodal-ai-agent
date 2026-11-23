@@ -8,10 +8,18 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE conversations
+    ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
+
+
 -- Safely add ownership to existing installations.
 ALTER TABLE conversations
     ADD COLUMN IF NOT EXISTS user_id UUID
     REFERENCES users(id);
+
+CREATE INDEX IF NOT EXISTS ix_conversations_user_pinned
+    ON conversations (user_id, pinned_at ASC)
+    WHERE pinned_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS ix_conversations_user_updated
     ON conversations (user_id, updated_at DESC);

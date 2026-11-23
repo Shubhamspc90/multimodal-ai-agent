@@ -45,6 +45,7 @@ def test_create_conversation(storage, database_mocks):
         "New conversation",
         timestamp,
         timestamp,
+        None,
     )
 
     result = storage.create_conversation(client_id)
@@ -53,7 +54,7 @@ def test_create_conversation(storage, database_mocks):
     assert result["client_id"] == client_id
     assert result["title"] == "New conversation"
 
-    query, params = cursor.execute.call_args.args
+    query, params = cursor.execute.call_args_list[0].args
     assert "INSERT INTO conversations" in query
     assert params[1] == client_id
     connect.assert_called_once()
@@ -72,6 +73,7 @@ def test_list_conversations(storage, database_mocks):
             "AI research",
             timestamp,
             timestamp,
+            None,
         )
     ]
 
@@ -80,7 +82,7 @@ def test_list_conversations(storage, database_mocks):
     assert len(results) == 1
     assert results[0]["title"] == "AI research"
 
-    query, params = cursor.execute.call_args.args
+    query, params = cursor.execute.call_args_list[0].args
     assert "WHERE client_id = %s" in query
     assert params == (client_id,)
 
@@ -97,6 +99,7 @@ def test_get_conversation_returns_messages(storage, database_mocks):
         "AI research",
         timestamp,
         timestamp,
+        None,
     )
     cursor.fetchall.return_value = [
         (1, "user", "Explain AI.", timestamp),
@@ -110,6 +113,39 @@ def test_get_conversation_returns_messages(storage, database_mocks):
     assert len(result["messages"]) == 2
     assert result["messages"][0]["role"] == "user"
     assert result["messages"][1]["content"] == "AI is..."
+
+
+def test_get_conversation_returns_pinned_at(storage, database_mocks):
+    user_id = uuid4()
+    conversation_id = uuid4()
+    client_id = uuid4()
+    timestamp = datetime.now(UTC)
+    pinned_at = datetime.now(UTC)
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.return_value = (
+        conversation_id,
+        client_id,
+        "AI research",
+        timestamp,
+        timestamp,
+        pinned_at,
+    )
+    cursor.fetchall.return_value = []
+
+    result = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert result is not None
+    assert result["id"] == conversation_id
+    assert result["pinned_at"] == pinned_at
+
+    query, params = cursor.execute.call_args_list[0].args
+    assert "pinned_at" in query
+    assert "WHERE id = %s AND user_id = %s" in query
+    assert params == (conversation_id, user_id)
 
 
 def test_get_conversation_returns_none_for_unknown_owner(
@@ -213,3 +249,145 @@ def test_storage_propagates_database_errors(
         match="connection unavailable",
     ):
         storage.create_conversation(uuid4())
+
+
+def test_pin_conversation(storage, database_mocks):
+    user_id = uuid4()
+    conversation_id = uuid4()
+    client_id = uuid4()
+    timestamp = datetime.now(UTC)
+
+    _, _, cursor = database_mocks
+
+    cursor.fetchone.side_effect = [
+        (user_id,),
+        (
+            conversation_id,
+            client_id,
+            "AI research",
+            timestamp,
+            timestamp,
+            None,
+        ),
+        (
+            conversation_id,
+            client_id,
+            "AI research",
+            timestamp,
+            timestamp,
+            timestamp,
+        ),
+    ]
+
+    result = storage.pin_conversation(conversation_id, user_id)
+
+    assert result is not None
+    assert result["id"] == conversation_id
+    assert result["pinned_at"] == timestamp
+
+    calls = cursor.execute.call_args_list
+    assert len(calls) == 3
+    assert "FOR UPDATE" in calls[0].args[0]
+    assert "WHERE id = %s AND user_id = %s" in calls[1].args[0]
+    assert "UPDATE conversations" in calls[2].args[0]
+
+
+def test_pin_conversation_preserves_existing_pin_order(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+    conversation_id = uuid4()
+    client_id = uuid4()
+    timestamp = datetime.now(UTC)
+
+    _, _, cursor = database_mocks
+
+    cursor.fetchone.side_effect = [
+        (user_id,),
+        (
+            conversation_id,
+            client_id,
+            "AI research",
+            timestamp,
+            timestamp,
+            timestamp,
+        ),
+    ]
+
+    result = storage.pin_conversation(conversation_id, user_id)
+
+    assert result is not None
+    assert result["pinned_at"] == timestamp
+
+    # No UPDATE should occur for an already-pinned conversation.
+    assert cursor.execute.call_count == 2
+
+
+def test_unpin_conversation(storage, database_mocks):
+    user_id = uuid4()
+    conversation_id = uuid4()
+    client_id = uuid4()
+    timestamp = datetime.now(UTC)
+
+    _, _, cursor = database_mocks
+
+    cursor.fetchone.side_effect = [
+        (user_id,),
+        (
+            conversation_id,
+            client_id,
+            "AI research",
+            timestamp,
+            timestamp,
+            None,
+        ),
+    ]
+
+    result = storage.unpin_conversation(conversation_id, user_id)
+
+    assert result is not None
+    assert result["id"] == conversation_id
+    assert result["pinned_at"] is None
+
+    calls = cursor.execute.call_args_list
+    assert len(calls) == 2
+    assert "FOR UPDATE" in calls[0].args[0]
+    assert "UPDATE conversations" in calls[1].args[0]
+    assert "SET pinned_at = NULL" in calls[1].args[0]
+
+
+def test_pin_conversation_rejects_another_users_conversation(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.side_effect = [
+        (user_id,),
+        None,
+    ]
+
+    result = storage.pin_conversation(uuid4(), user_id)
+
+    assert result is None
+    assert cursor.execute.call_count == 2
+
+
+def test_unpin_conversation_rejects_another_users_conversation(
+    storage,
+    database_mocks,
+):
+    user_id = uuid4()
+
+    _, _, cursor = database_mocks
+    cursor.fetchone.side_effect = [
+        (user_id,),
+        None,
+    ]
+
+    result = storage.unpin_conversation(uuid4(), user_id)
+
+    assert result is None
+    assert cursor.execute.call_count == 2
