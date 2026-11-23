@@ -13,6 +13,8 @@ import {
   getCurrentUser,
   listConversations,
   logoutUser,
+  pinConversation,
+  unpinConversation,
   sendConversationMessage,
   updateUserProfile,
   deleteConversation,
@@ -39,6 +41,9 @@ import {
   Square,
   X,
   Trash2,
+  Ellipsis,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import "./App.css";
 
@@ -285,6 +290,38 @@ function App() {
   const [historyError, setHistoryError] = useState("");
 
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
+
+  const [pinningConversationId, setPinningConversationId] =
+    useState<string | null>(null);
+
+  const [openConversationMenuId, setOpenConversationMenuId] =
+    useState<string | null>(null);
+  useEffect(() => {
+    if (!openConversationMenuId) return;
+
+    const handleOutsideClick = (event: PointerEvent) => {
+      if (
+        event.target instanceof Element &&
+        !event.target.closest(".conversation-actions")
+      ) {
+        setOpenConversationMenuId(null);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenConversationMenuId(null);
+      }
+    };
+
+    document.addEventListener("pointerdown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [openConversationMenuId]);
 
   const [selectedDocument, setSelectedDocument] = useState<File | null>(null);
   const [documentQuestion, setDocumentQuestion] = useState("");
@@ -579,6 +616,70 @@ function App() {
       deletingConversationId,
       isLoadingConversation,
       isSending,
+      refreshConversations,
+    ],
+  );
+
+  const handleTogglePinConversation = useCallback(
+    async (conversationId: string) => {
+      if (
+        pinningConversationId ||
+        deletingConversationId ||
+        isLoadingConversation ||
+        isSending
+      ) {
+        return;
+      }
+
+      const conversation = conversations.find(
+        (item) => item.id === conversationId,
+      );
+
+      if (!conversation) {
+        setHistoryError("This conversation is no longer available.");
+        setOpenConversationMenuId(null);
+        return;
+      }
+
+      const isPinned = conversation.pinned_at !== null;
+
+      setPinningConversationId(conversationId);
+      setOpenConversationMenuId(null);
+      setHistoryError("");
+
+      try {
+        if (isPinned) {
+          await unpinConversation(conversationId);
+        } else {
+          await pinConversation(conversationId);
+        }
+
+        // Refresh from the backend to preserve its canonical ordering.
+        await refreshConversations();
+      } catch (error: unknown) {
+        if (isSessionError(error)) {
+          setAuthError(
+            "Your session has expired or needs verification. Please sign in again.",
+          );
+          setAuthUser(null);
+          return;
+        }
+
+        setHistoryError(
+          error instanceof Error
+            ? error.message
+            : "Unable to update the conversation pin status.",
+        );
+      } finally {
+        setPinningConversationId(null);
+      }
+    },
+    [
+      conversations,
+      deletingConversationId,
+      isLoadingConversation,
+      isSending,
+      pinningConversationId,
       refreshConversations,
     ],
   );
@@ -1588,6 +1689,87 @@ function App() {
     );
   }
 
+  const renderConversationRow = (conversation: ConversationSummary) => {
+    const isPinned = conversation.pinned_at !== null;
+    const isMenuOpen = openConversationMenuId === conversation.id;
+
+    const isDisabled =
+      isLoadingConversation ||
+      isSending ||
+      Boolean(deletingConversationId) ||
+      Boolean(pinningConversationId);
+
+    return (
+      <div className="conversation-row" key={conversation.id}>
+        <button
+          type="button"
+          className={`conversation-item ${activeConversationId === conversation.id
+              ? "conversation-item-active"
+              : ""
+            }`}
+          aria-current={
+            activeConversationId === conversation.id ? "true" : undefined
+          }
+          title={conversation.title}
+          disabled={isDisabled}
+          onClick={() => void handleSelectConversation(conversation.id)}
+        >
+          <MessageSquare size={15} />
+          <span>{conversation.title}</span>
+        </button>
+
+        <div className="conversation-actions">
+          <button
+            type="button"
+            className="conversation-menu-trigger"
+            aria-label={`Actions for ${conversation.title}`}
+            aria-haspopup="menu"
+            aria-expanded={isMenuOpen}
+            title="Conversation actions"
+            disabled={isDisabled}
+            onClick={() =>
+              setOpenConversationMenuId((current) =>
+                current === conversation.id ? null : conversation.id,
+              )
+            }
+          >
+            <Ellipsis size={17} />
+          </button>
+
+          {isMenuOpen && (
+            <div className="conversation-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isDisabled}
+                onClick={() =>
+                  void handleTogglePinConversation(conversation.id)
+                }
+              >
+                {isPinned ? <PinOff size={14} /> : <Pin size={14} />}
+                <span>{isPinned ? "Unpin" : "Pin"}</span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                className="conversation-menu-delete"
+                disabled={isDisabled}
+                onClick={() => {
+                  setOpenConversationMenuId(null);
+                  void handleDeleteConversation(conversation.id);
+                }}
+              >
+                <Trash2 size={14} />
+                <span>Delete</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <main className="app-shell">
       {sidebarOpen && (
@@ -1648,7 +1830,6 @@ function App() {
           ))}
         </nav>
 
-        <div className="nav-label recent-label">RECENT</div>
 
         {isLoadingHistory && (
           <div className="empty-history">
@@ -1671,49 +1852,33 @@ function App() {
 
         {conversations.length > 0 && (
           <div className="conversation-list">
-            {conversations.map((conversation) => (
-              <div className="conversation-row" key={conversation.id}>
-                <button
-                  type="button"
-                  className={`conversation-item ${activeConversationId === conversation.id
-                    ? "conversation-item-active"
-                    : ""
-                    }`}
-                  aria-current={
-                    activeConversationId === conversation.id
-                      ? "true"
-                      : undefined
-                  }
-                  title={conversation.title}
-                  disabled={
-                    isLoadingConversation ||
-                    isSending ||
-                    Boolean(deletingConversationId)
-                  }
-                  onClick={() => void handleSelectConversation(conversation.id)}
-                >
-                  <MessageSquare size={15} />
-                  <span>{conversation.title}</span>
-                </button>
+            {conversations.some(
+              (conversation) => conversation.pinned_at !== null,
+            ) && (
+                <section className="conversation-section">
+                  <div className="nav-label conversation-section-label">
+                    PINNED
+                  </div>
 
-                <button
-                  type="button"
-                  className="conversation-delete"
-                  aria-label={`Delete ${conversation.title}`}
-                  title="Delete conversation"
-                  disabled={
-                    isLoadingConversation ||
-                    isSending ||
-                    Boolean(deletingConversationId)
-                  }
-                  onClick={() =>
-                    void handleDeleteConversation(conversation.id)
-                  }
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            ))}
+                  {conversations
+                    .filter((conversation) => conversation.pinned_at !== null)
+                    .map((conversation) => renderConversationRow(conversation))}
+                </section>
+              )}
+
+            {conversations.some(
+              (conversation) => conversation.pinned_at === null,
+            ) && (
+                <section className="conversation-section">
+                  <div className="nav-label conversation-section-label">
+                    RECENT
+                  </div>
+
+                  {conversations
+                    .filter((conversation) => conversation.pinned_at === null)
+                    .map((conversation) => renderConversationRow(conversation))}
+                </section>
+              )}
           </div>
         )}
 

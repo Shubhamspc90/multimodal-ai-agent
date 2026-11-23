@@ -234,6 +234,7 @@ export interface ConversationSummary {
   title: string;
   created_at: string;
   updated_at: string;
+  pinned_at: string | null;
 }
 
 export interface ConversationDetail extends ConversationSummary {
@@ -300,6 +301,28 @@ export function deleteConversation(
     `/api/v1/conversations/${encodeURIComponent(conversationId)}`,
     {
       method: "DELETE",
+    },
+  );
+}
+
+export function pinConversation(
+  conversationId: string,
+): Promise<ConversationSummary> {
+  return apiRequest<ConversationSummary>(
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}/pin`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function unpinConversation(
+  conversationId: string,
+): Promise<ConversationSummary> {
+  return apiRequest<ConversationSummary>(
+    `/api/v1/conversations/${encodeURIComponent(conversationId)}/unpin`,
+    {
+      method: "POST",
     },
   );
 }
