@@ -156,69 +156,43 @@ button:focus-visible {
   height: 5px;
 }
 
-.recent-label { margin-top: 35px; }
 .empty-history { padding: 15px 10px; color: #9298ad; }
 .empty-history p { font-size: 11px; line-height: 1.6; max-width: 170px; }
 .conversation-list {
   display: grid;
   flex: 1 1 0;
   min-height: 0;
-  gap: 5px;
+  gap: 12px;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 2px;
   align-content: start;
 }
 
+.conversation-section {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.conversation-section-label {
+  margin: 10px 8px 3px;
+}
+
 .conversation-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 .conversation-item {
+  display: flex;
   flex: 1;
-  min-width: 0;
-  width: auto;
-}
-
-.conversation-delete {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: #8b91a5;
-  cursor: pointer;
-  transition:
-    background 0.18s ease,
-    color 0.18s ease;
-}
-
-.conversation-delete:hover:not(:disabled) {
-  color: #dc3545;
-  background: #fff0f0;
-}
-
-.conversation-delete:focus-visible {
-  outline: 2px solid #8b7ce8;
-  outline-offset: 2px;
-}
-
-.conversation-delete:disabled {
-  opacity: 0.5;
-  cursor: wait;
-}
-
-.conversation-item {
-  display: flex;
   align-items: center;
   gap: 9px;
+  min-width: 0;
   width: 100%;
   padding: 10px;
   border: 1px solid transparent;
@@ -231,7 +205,7 @@ button:focus-visible {
   transition: background 0.18s ease, color 0.18s ease;
 }
 
-.conversation-item:hover {
+.conversation-item:hover:not(:disabled) {
   color: #453c85;
   background: #f4f2ff;
 }
@@ -253,6 +227,95 @@ button:focus-visible {
   opacity: 0.6;
   cursor: wait;
 }
+
+.conversation-actions {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.conversation-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #8b91a5;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.conversation-row:hover .conversation-menu-trigger,
+.conversation-row:focus-within .conversation-menu-trigger,
+.conversation-menu-trigger[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.conversation-menu-trigger:hover:not(:disabled) {
+  color: #453c85;
+  background: #f0edff;
+}
+
+.conversation-menu-trigger:focus-visible,
+.conversation-menu button:focus-visible {
+  outline: 2px solid #8b7ce8;
+  outline-offset: 2px;
+}
+
+.conversation-menu-trigger:disabled {
+  opacity: 0.4;
+  cursor: wait;
+}
+
+.conversation-menu {
+  position: absolute;
+  top: calc(100% + 3px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  min-width: 145px;
+  padding: 5px;
+  border: 1px solid #e8e7f0;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(30 35 70 / 13%);
+}
+
+.conversation-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #515873;
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.conversation-menu button:hover:not(:disabled) {
+  background: #f4f2ff;
+  color: #453c85;
+}
+
+.conversation-menu button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.conversation-menu .conversation-menu-delete:hover:not(:disabled) {
+  color: #dc3545;
+  background: #fff0f0;
+}
+
 
 .history-error {
   margin: 8px 9px;
