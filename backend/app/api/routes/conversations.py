@@ -147,6 +147,68 @@ def claim_legacy_conversations(
     return {"linked_conversations": linked_count}
 
 
+@router.post(
+    "/{conversation_id}/pin",
+    response_model=ConversationSummary,
+)
+def pin_conversation(
+    conversation_id: UUID,
+    current_user: CurrentUser,
+    csrf_protection: CsrfProtection,
+    storage: Annotated[
+        PostgresChatHistoryStorage,
+        Depends(get_chat_history_storage),
+    ],
+) -> dict:
+    """Pin a conversation owned by the authenticated user."""
+    try:
+        conversation = storage.pin_conversation(
+            conversation_id=conversation_id,
+            user_id=current_user["id"],
+        )
+    except (psycopg.Error, ValueError) as exc:
+        raise _database_unavailable(exc) from exc
+
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found.",
+        )
+
+    return conversation
+
+
+@router.post(
+    "/{conversation_id}/unpin",
+    response_model=ConversationSummary,
+)
+def unpin_conversation(
+    conversation_id: UUID,
+    current_user: CurrentUser,
+    csrf_protection: CsrfProtection,
+    storage: Annotated[
+        PostgresChatHistoryStorage,
+        Depends(get_chat_history_storage),
+    ],
+) -> dict:
+    """Unpin a conversation owned by the authenticated user."""
+    try:
+        conversation = storage.unpin_conversation(
+            conversation_id=conversation_id,
+            user_id=current_user["id"],
+        )
+    except (psycopg.Error, ValueError) as exc:
+        raise _database_unavailable(exc) from exc
+
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found.",
+        )
+
+    return conversation
+
+
 @router.get("/{conversation_id}", response_model=ConversationDetail)
 def load_conversation(
     conversation_id: UUID,

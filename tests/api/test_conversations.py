@@ -35,6 +35,7 @@ class FakeChatHistoryStorage:
             "title": "New conversation",
             "created_at": timestamp,
             "updated_at": timestamp,
+            "pinned_at": None,
             "messages": [],
         }
 
@@ -64,8 +65,12 @@ class FakeChatHistoryStorage:
 
         return sorted(
             results,
-            key=lambda item: (item["updated_at"], str(item["id"])),
-            reverse=True,
+            key=lambda item: (
+                item["pinned_at"] is None,
+                item["pinned_at"] or datetime.max.replace(tzinfo=UTC),
+                -item["updated_at"].timestamp(),
+                -item["id"].int,
+            ),
         )
 
     def get_conversation(
@@ -120,6 +125,53 @@ class FakeChatHistoryStorage:
             }
             for message in conversation["messages"][-limit:]
         ]
+
+    def pin_conversation(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> dict | None:
+        """Pin a conversation belonging to the authenticated user."""
+        conversation = self.conversations.get(conversation_id)
+
+        if conversation is None or conversation["user_id"] != user_id:
+            return None
+
+        if conversation["pinned_at"] is None:
+            latest_pin = max(
+                (
+                    item["pinned_at"]
+                    for item in self.conversations.values()
+                    if item["user_id"] == user_id and item["pinned_at"] is not None
+                ),
+                default=None,
+            )
+
+            timestamp = datetime.now(UTC)
+
+            if latest_pin is not None and timestamp <= latest_pin:
+                from datetime import timedelta
+
+                timestamp = latest_pin + timedelta(microseconds=1)
+
+            conversation["pinned_at"] = timestamp
+
+        return self._summary(conversation)
+
+    def unpin_conversation(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> dict | None:
+        """Unpin a conversation belonging to the authenticated user."""
+        conversation = self.conversations.get(conversation_id)
+
+        if conversation is None or conversation["user_id"] != user_id:
+            return None
+
+        conversation["pinned_at"] = None
+
+        return self._summary(conversation)
 
     def delete_conversation(
         self,
@@ -211,6 +263,7 @@ class FakeChatHistoryStorage:
             "title": conversation["title"],
             "created_at": conversation["created_at"],
             "updated_at": conversation["updated_at"],
+            "pinned_at": conversation.get("pinned_at"),
         }
 
 
@@ -1076,3 +1129,127 @@ def test_send_conversation_message_continues_when_memory_capture_fails(
     assert len(saved_conversation["messages"]) == 2
     assert saved_conversation["messages"][0]["role"] == "user"
     assert saved_conversation["messages"][1]["role"] == "assistant"
+
+
+def test_pin_conversation_returns_pinned_conversation(api_client):
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation['id']}/pin",
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+    assert result["id"] == str(conversation["id"])
+    assert result["pinned_at"] is not None
+    assert storage.conversations[conversation["id"]]["pinned_at"] is not None
+
+
+def test_unpin_conversation_returns_unpinned_conversation(api_client):
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    storage.pin_conversation(conversation["id"], user_id)
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation['id']}/unpin",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["pinned_at"] is None
+    assert storage.conversations[conversation["id"]]["pinned_at"] is None
+
+
+def test_pin_conversation_returns_404_for_another_user(api_client):
+    client, storage = api_client
+
+    conversation = storage.create_conversation(uuid4(), uuid4())
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation['id']}/pin",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found."
+    assert storage.conversations[conversation["id"]]["pinned_at"] is None
+
+
+def test_unpin_conversation_returns_404_for_another_user(api_client):
+    client, storage = api_client
+
+    conversation = storage.create_conversation(uuid4(), uuid4())
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation['id']}/unpin",
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found."
+
+
+def test_pin_conversation_rejects_invalid_csrf_token(api_client):
+    client, storage = api_client
+
+    conversation = storage.create_conversation(
+        uuid4(),
+        storage.authenticated_user_id,
+    )
+
+    client.headers[auth_dependencies.CSRF_HEADER_NAME] = "incorrect-csrf-token"
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation['id']}/pin",
+    )
+
+    assert response.status_code == 403
+    assert storage.conversations[conversation["id"]]["pinned_at"] is None
+
+
+def test_unpin_conversation_rejects_invalid_csrf_token(api_client):
+    client, storage = api_client
+
+    conversation = storage.create_conversation(
+        uuid4(),
+        storage.authenticated_user_id,
+    )
+    storage.pin_conversation(
+        conversation["id"],
+        storage.authenticated_user_id,
+    )
+
+    client.headers[auth_dependencies.CSRF_HEADER_NAME] = "incorrect-csrf-token"
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation['id']}/unpin",
+    )
+
+    assert response.status_code == 403
+    assert storage.conversations[conversation["id"]]["pinned_at"] is not None
+
+
+def test_list_conversations_places_pinned_conversations_first(api_client):
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    first = storage.create_conversation(uuid4(), user_id)
+    second = storage.create_conversation(uuid4(), user_id)
+    recent = storage.create_conversation(uuid4(), user_id)
+
+    storage.pin_conversation(first["id"], user_id)
+    storage.pin_conversation(second["id"], user_id)
+
+    response = client.get("/api/v1/conversations")
+
+    assert response.status_code == 200
+
+    results = response.json()
+    assert [item["id"] for item in results] == [
+        str(first["id"]),
+        str(second["id"]),
+        str(recent["id"]),
+    ]

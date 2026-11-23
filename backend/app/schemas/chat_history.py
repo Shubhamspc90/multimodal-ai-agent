@@ -29,6 +29,7 @@ class ConversationSummary(BaseModel):
     title: str
     created_at: datetime
     updated_at: datetime
+    pinned_at: datetime | None = None
 
 
 class ConversationMessage(BaseModel):

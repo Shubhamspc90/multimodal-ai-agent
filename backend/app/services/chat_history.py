@@ -93,15 +93,19 @@ class PostgresChatHistoryStorage:
 
         if user_id is not None:
             query = """
-                SELECT id, client_id, title, created_at, updated_at
+                SELECT id, client_id, title, created_at, updated_at, pinned_at
                 FROM conversations
                 WHERE user_id = %s
-                ORDER BY updated_at DESC, id DESC
+                ORDER BY
+                    CASE WHEN pinned_at IS NULL THEN 1 ELSE 0 END,
+                    pinned_at ASC NULLS LAST,
+                    updated_at DESC,
+                    id DESC
             """
             params = (user_id,)
         elif client_id is not None:
             query = """
-                SELECT id, client_id, title, created_at, updated_at
+                SELECT id, client_id, title, created_at, updated_at, pinned_at
                 FROM conversations
                 WHERE client_id = %s AND user_id IS NULL
                 ORDER BY updated_at DESC, id DESC
@@ -128,14 +132,15 @@ class PostgresChatHistoryStorage:
 
         if user_id is not None:
             conversation_query = """
-                SELECT id, client_id, title, created_at, updated_at
+                SELECT id, client_id, title, created_at, updated_at, pinned_at
+
                 FROM conversations
                 WHERE id = %s AND user_id = %s
             """
             params = (conversation_id, user_id)
         elif client_id is not None:
             conversation_query = """
-                SELECT id, client_id, title, created_at, updated_at
+                SELECT id, client_id, title, created_at, updated_at, pinned_at
                 FROM conversations
                 WHERE id = %s AND client_id = %s AND user_id IS NULL
             """
@@ -215,6 +220,96 @@ class PostgresChatHistoryStorage:
             }
             for row in reversed(rows)
         ]
+
+    def pin_conversation(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> dict | None:
+        """Pin a conversation belonging to the authenticated user."""
+        self._ensure_schema()
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                # Serialize pin operations for this user to preserve pin order.
+                cursor.execute(
+                    "SELECT id FROM users WHERE id = %s FOR UPDATE",
+                    (user_id,),
+                )
+                if cursor.fetchone() is None:
+                    return None
+
+                cursor.execute(
+                    """
+                    SELECT id, client_id, title, created_at, updated_at, pinned_at
+                    FROM conversations
+                    WHERE id = %s AND user_id = %s
+                    FOR UPDATE
+                    """,
+                    (conversation_id, user_id),
+                )
+                row = cursor.fetchone()
+
+                if row is None:
+                    return None
+
+                # Repeated pin requests must not change the original pin order.
+                if row[5] is not None:
+                    return self._conversation_dict(row)
+
+                cursor.execute(
+                    """
+                    UPDATE conversations
+                    SET pinned_at = GREATEST(
+                        clock_timestamp(),
+                        COALESCE(
+                            (
+                                SELECT MAX(pinned_at) + INTERVAL '1 microsecond'
+                                FROM conversations
+                                WHERE user_id = %s
+                            ),
+                            clock_timestamp()
+                        )
+                    )
+                    WHERE id = %s AND user_id = %s
+                    RETURNING id, client_id, title, created_at, updated_at, pinned_at
+                    """,
+                    (user_id, conversation_id, user_id),
+                )
+                updated_row = cursor.fetchone()
+
+        return self._conversation_dict(updated_row) if updated_row else None
+
+    def unpin_conversation(
+        self,
+        conversation_id: UUID,
+        user_id: UUID,
+    ) -> dict | None:
+        """Unpin a conversation belonging to the authenticated user."""
+        self._ensure_schema()
+
+        with self._connection() as connection:
+            with connection.cursor() as cursor:
+                # Use the same per-user lock as pin_conversation().
+                cursor.execute(
+                    "SELECT id FROM users WHERE id = %s FOR UPDATE",
+                    (user_id,),
+                )
+                if cursor.fetchone() is None:
+                    return None
+
+                cursor.execute(
+                    """
+                    UPDATE conversations
+                    SET pinned_at = NULL
+                    WHERE id = %s AND user_id = %s
+                    RETURNING id, client_id, title, created_at, updated_at, pinned_at
+                    """,
+                    (conversation_id, user_id),
+                )
+                row = cursor.fetchone()
+
+        return self._conversation_dict(row) if row else None
 
     def delete_conversation(
         self,
@@ -388,4 +483,5 @@ class PostgresChatHistoryStorage:
             "title": row[2],
             "created_at": row[3],
             "updated_at": row[4],
+            "pinned_at": row[5],
         }
