@@ -1,5 +1,19 @@
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  isValidElement,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
+
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import rehypeHighlight from "rehype-highlight";
+import "katex/dist/katex.min.css";
 import AuthPanel from "./components/AuthPanel";
 
 import {
@@ -244,6 +258,152 @@ function isSessionError(error: unknown): boolean {
     (error.status === 401 || error.status === 403)
   );
 }
+
+
+function extractCodeText(node: React.ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+
+  if (Array.isArray(node)) {
+    return node.map(extractCodeText).join("");
+  }
+
+  if (
+    node &&
+    typeof node === "object" &&
+    "props" in node
+  ) {
+    return extractCodeText(
+      (node as { props: { children?: React.ReactNode } }).props.children,
+    );
+  }
+
+  return "";
+}
+
+function MermaidDiagram({ chart }: { chart: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState(false);
+  const id = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+
+  useEffect(() => {
+    let cancelled = false;
+    const container = containerRef.current;
+
+    const renderDiagram = async () => {
+      try {
+        const { default: mermaid } = await import("mermaid");
+
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "default",
+        });
+
+        const { svg } = await mermaid.render(
+          `mermaid-${id}`,
+          chart,
+        );
+
+        if (!cancelled && container) {
+          container.innerHTML = svg;
+          setError(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setError(true);
+        }
+      }
+    };
+
+    void renderDiagram();
+
+    return () => {
+      cancelled = true;
+
+      if (container) {
+        container.innerHTML = "";
+      }
+    };
+  }, [chart, id]);
+
+  return (
+    <div className="markdown-mermaid-diagram">
+      {error ? (
+        <div className="markdown-mermaid-error" role="alert">
+          <p>Unable to render this Mermaid diagram.</p>
+          <pre>
+            <code>{chart}</code>
+          </pre>
+        </div>
+      ) : (
+        <div
+          ref={containerRef}
+          role="img"
+          aria-label="Mermaid diagram"
+        />
+      )}
+    </div>
+  );
+}
+
+function MarkdownCodeBlock({
+  children,
+  ...props
+}: React.ComponentProps<"pre">) {
+  const [copied, setCopied] = useState(false);
+
+  const codeElement = isValidElement<{
+    className?: string;
+    children?: React.ReactNode;
+  }>(children)
+    ? children
+    : null;
+
+  const languageClass = codeElement?.props.className ?? "";
+
+  if (
+    codeElement &&
+    /\blanguage-mermaid\b/.test(languageClass)
+  ) {
+    return (
+      <MermaidDiagram
+        chart={extractCodeText(codeElement.props.children).replace(/\n$/, "")}
+      />
+    );
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(extractCodeText(children));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="markdown-code-block">
+      <button
+        type="button"
+        className="markdown-code-copy"
+        onClick={handleCopy}
+        aria-label="Copy code"
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+
+      <pre {...props}>{children}</pre>
+    </div>
+  );
+}
+
+const markdownComponents: Components = {
+  pre: MarkdownCodeBlock,
+};
+
 
 function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("Chat");
@@ -2318,7 +2478,19 @@ function App() {
                             <span className="chat-message-role">
                               {message.role === "user" ? "You" : "AI assistant"}
                             </span>
-                            <p>{message.content}</p>
+                            {message.role === "assistant" ? (
+                              <div className="chat-message-content">
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkGfm, remarkMath]}
+                                  rehypePlugins={[rehypeKatex, rehypeHighlight]}
+                                  components={markdownComponents}
+                                >
+                                  {message.content}
+                                </ReactMarkdown>
+                              </div>
+                            ) : (
+                              <p>{message.content}</p>
+                            )}
                           </article>
                         ))}
 
