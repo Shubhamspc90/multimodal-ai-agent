@@ -53,9 +53,11 @@ def test_create_conversation(storage, database_mocks):
     assert result["id"] == conversation_id
     assert result["client_id"] == client_id
     assert result["title"] == "New conversation"
+    assert result["pinned_at"] is None
 
     query, params = cursor.execute.call_args_list[0].args
     assert "INSERT INTO conversations" in query
+    assert "RETURNING id, client_id, title, created_at, updated_at, pinned_at" in query
     assert params[1] == client_id
     connect.assert_called_once()
 

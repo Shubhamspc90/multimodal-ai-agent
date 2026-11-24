@@ -73,7 +73,7 @@ class PostgresChatHistoryStorage:
         query = """
             INSERT INTO conversations (id, client_id, user_id)
             VALUES (%s, %s, %s)
-            RETURNING id, client_id, title, created_at, updated_at
+            RETURNING id, client_id, title, created_at, updated_at, pinned_at
         """
 
         with self._connection() as connection:
