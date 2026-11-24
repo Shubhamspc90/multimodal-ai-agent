@@ -1871,7 +1871,9 @@ function App() {
             >
               <Icon size={18} strokeWidth={1.8} />
               <span>{name}</span>
-              {activeWorkspace === name && <span className="nav-dot" />}
+              {activeView === "workspace" && activeWorkspace === name && (
+                <span className="nav-dot" />
+              )}
             </button>
           ))}
         </nav>
@@ -1945,6 +1947,7 @@ function App() {
           >
             <Settings2 size={18} />
             <span>Settings</span>
+            {activeView === "settings" && <span className="nav-dot" />}
           </button>
           <div className="profile">
             <div className="avatar">
