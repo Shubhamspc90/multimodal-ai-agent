@@ -1,5 +1,6 @@
 """API tests for authenticated persistent chat conversations."""
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 from backend.app.api import dependencies as auth_dependencies
 from backend.app.api.routes import conversations as conversations_route
 from backend.app.main import app
+from backend.app.schemas.a2ui import A2UI_BASIC_CATALOG_ID
 from backend.app.schemas.agent import AgentInputType, AgentRequest, AgentResponse
 from backend.app.services.diagram_prompt import (
     DIAGRAM_GENERATION_SYSTEM_PROMPT,
@@ -521,6 +523,280 @@ def test_send_conversation_message_saves_user_and_ai_messages(
             "content": "Explain AI agents.",
         },
     ]
+
+
+def test_send_conversation_message_saves_valid_a2ui_response_and_captures_readable_text(
+    api_client,
+    monkeypatch,
+):
+    """Persist validated A2UI output without sending protocol JSON to memory."""
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    messages = [
+        {
+            "version": "1.0",
+            "createSurface": {
+                "surfaceId": "surface-1",
+                "catalogId": A2UI_BASIC_CATALOG_ID,
+                "sendDataModel": False,
+            },
+        },
+        {
+            "version": "1.0",
+            "updateComponents": {
+                "surfaceId": "surface-1",
+                "components": [
+                    {
+                        "id": "root",
+                        "component": "Column",
+                        "children": ["heading", "body"],
+                    },
+                    {
+                        "id": "heading",
+                        "component": "Text",
+                        "text": "Welcome",
+                        "variant": "body",
+                    },
+                    {
+                        "id": "body",
+                        "component": "Text",
+                        "text": "A2UI is ready.",
+                    },
+                ],
+            },
+        },
+    ]
+
+    readable_text = "Here is your structured summary."
+    provider_response = f"{readable_text}\n\n```a2ui-json\n{json.dumps(messages)}\n```"
+
+    class A2UIAgentService:
+        async def process_text(self, request, messages=None):
+            return AgentResponse(
+                status="completed",
+                input_type=AgentInputType.TEXT,
+                response=provider_response,
+                capability="text",
+            )
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        A2UIAgentService,
+    )
+
+    class RecordingCaptureService:
+        def __init__(self):
+            self.received_messages = None
+
+        async def capture_memories(self, user_id, messages):
+            self.received_messages = messages
+            return []
+
+    capture_service = RecordingCaptureService()
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_long_term_memory_capture_service",
+        lambda agent_service: capture_service,
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "Show me a structured summary.",
+        },
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+    stored_content = result["assistant_message"]["content"]
+    envelope = json.loads(stored_content)
+
+    assert envelope == {
+        "type": "a2ui",
+        "version": "1.0",
+        "text": readable_text,
+        "messages": messages,
+    }
+
+    saved_conversation = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert saved_conversation is not None
+    assert saved_conversation["messages"][-1]["content"] == stored_content
+
+    captured_messages = capture_service.received_messages
+
+    assert captured_messages is not None
+    assert captured_messages[-1] == {
+        "role": "assistant",
+        "content": readable_text,
+    }
+    assert "a2ui-json" not in captured_messages[-1]["content"]
+    assert '"createSurface"' not in captured_messages[-1]["content"]
+
+
+def test_send_conversation_message_falls_back_to_markdown_for_invalid_a2ui(
+    api_client,
+    monkeypatch,
+):
+    """Preserve the original response when A2UI validation fails."""
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    provider_response = (
+        "Here is the summary.\n\n"
+        '```a2ui-json\n[{"version":"0.9","deleteSurface":{"surfaceId":"s1"}}]\n```'
+    )
+
+    class InvalidA2UIAgentService:
+        async def process_text(self, request, messages=None):
+            return AgentResponse(
+                status="completed",
+                input_type=AgentInputType.TEXT,
+                response=provider_response,
+                capability="text",
+            )
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        InvalidA2UIAgentService,
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "Show me a structured summary.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["assistant_message"]["content"] == provider_response
+
+    saved_conversation = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert saved_conversation is not None
+    assert saved_conversation["messages"][-1]["content"] == provider_response
+
+
+def _assert_a2ui_fallback_response_is_persisted(
+    api_client,
+    monkeypatch,
+    provider_response: str,
+) -> None:
+    """Verify fallback responses are returned and persisted unchanged."""
+    client, storage = api_client
+    user_id = storage.authenticated_user_id
+
+    conversation = storage.create_conversation(uuid4(), user_id)
+    conversation_id = conversation["id"]
+
+    class FallbackA2UIAgentService:
+        async def process_text(self, request, messages=None):
+            return AgentResponse(
+                status="completed",
+                input_type=AgentInputType.TEXT,
+                response=provider_response,
+                capability="text",
+            )
+
+    monkeypatch.setattr(
+        conversations_route,
+        "get_agent_service",
+        FallbackA2UIAgentService,
+    )
+
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={
+            "client_id": str(conversation["client_id"]),
+            "message": "Show me a response.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["assistant_message"]["content"] == provider_response
+
+    saved_conversation = storage.get_conversation(
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    assert saved_conversation is not None
+    assert saved_conversation["messages"][-1]["content"] == provider_response
+
+
+def test_send_conversation_message_preserves_malformed_a2ui_json(
+    api_client,
+    monkeypatch,
+):
+    """Preserve the original response when an A2UI block contains malformed JSON."""
+    provider_response = (
+        'Here is the summary.\n\n```a2ui-json\n{"version": "1.0", invalid-json}\n```'
+    )
+
+    _assert_a2ui_fallback_response_is_persisted(
+        api_client,
+        monkeypatch,
+        provider_response,
+    )
+
+
+def test_send_conversation_message_preserves_multiple_a2ui_blocks(
+    api_client,
+    monkeypatch,
+):
+    """Preserve the original response when multiple A2UI blocks are present."""
+    provider_response = (
+        "Here are two structured sections.\n\n"
+        "```a2ui-json\n[]\n```\n\n"
+        "```a2ui-json\n[]\n```"
+    )
+
+    _assert_a2ui_fallback_response_is_persisted(
+        api_client,
+        monkeypatch,
+        provider_response,
+    )
+
+
+def test_send_conversation_message_preserves_ordinary_markdown_without_a2ui(
+    api_client,
+    monkeypatch,
+):
+    """Preserve ordinary Markdown responses without A2UI processing."""
+    provider_response = (
+        "# Summary\n\n"
+        "This is a normal Markdown response.\n\n"
+        "- First point\n"
+        "- Second point\n\n"
+        "```python\n"
+        "print('Hello, world!')\n"
+        "```"
+    )
+
+    _assert_a2ui_fallback_response_is_persisted(
+        api_client,
+        monkeypatch,
+        provider_response,
+    )
 
 
 def test_send_conversation_message_includes_relevant_long_term_memories(

@@ -4,10 +4,12 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
 
+import A2uiRenderer from "./components/A2uiRenderer";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -404,6 +406,85 @@ const markdownComponents: Components = {
   pre: MarkdownCodeBlock,
 };
 
+type A2uiEnvelope = {
+  type: "a2ui";
+  version: "1.0";
+  text: string;
+  messages: unknown[];
+};
+
+type AssistantMessageContentProps = {
+  messageId: number;
+  content: string;
+};
+
+function AssistantMessageContent({
+  messageId,
+  content,
+}: AssistantMessageContentProps) {
+  const a2uiEnvelope = useMemo<A2uiEnvelope | null>(() => {
+    try {
+      const parsed: unknown = JSON.parse(content);
+
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        !("type" in parsed) ||
+        !("version" in parsed) ||
+        !("text" in parsed) ||
+        !("messages" in parsed)
+      ) {
+        return null;
+      }
+
+      if (
+        parsed.type !== "a2ui" ||
+        parsed.version !== "1.0" ||
+        typeof parsed.text !== "string" ||
+        !Array.isArray(parsed.messages)
+      ) {
+        return null;
+      }
+
+      return parsed as A2uiEnvelope;
+    } catch {
+      return null;
+    }
+  }, [content]);
+
+  if (!a2uiEnvelope) {
+    return (
+      <div className="chat-message-content">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeKatex, rehypeHighlight]}
+          components={markdownComponents}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+
+  return (
+    <div className="chat-message-content">
+      {a2uiEnvelope.text && (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeKatex, rehypeHighlight]}
+          components={markdownComponents}
+        >
+          {a2uiEnvelope.text}
+        </ReactMarkdown>
+      )}
+
+      <A2uiRenderer
+        key={messageId}
+        messages={a2uiEnvelope.messages}
+      />
+    </div>
+  );
+}
 
 function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("Chat");
@@ -2479,15 +2560,11 @@ function App() {
                               {message.role === "user" ? "You" : "AI assistant"}
                             </span>
                             {message.role === "assistant" ? (
-                              <div className="chat-message-content">
-                                <ReactMarkdown
-                                  remarkPlugins={[remarkGfm, remarkMath]}
-                                  rehypePlugins={[rehypeKatex, rehypeHighlight]}
-                                  components={markdownComponents}
-                                >
-                                  {message.content}
-                                </ReactMarkdown>
-                              </div>
+                              <AssistantMessageContent
+                                key={message.id}
+                                messageId={message.id}
+                                content={message.content}
+                              />
                             ) : (
                               <p>{message.content}</p>
                             )}
