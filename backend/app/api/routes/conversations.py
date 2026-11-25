@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
@@ -12,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.app.api.dependencies import CsrfProtection, CurrentUser
 from backend.app.api.routes.text import get_agent_service
+from backend.app.schemas.a2ui import validate_a2ui_message_batch
 from backend.app.schemas.agent import AgentRequest
 from backend.app.schemas.chat_history import (
     ChatMessageCreateRequest,
@@ -87,6 +89,54 @@ def _database_unavailable(exc: Exception) -> HTTPException:
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Chat history storage is temporarily unavailable.",
     )
+
+
+_A2UI_BLOCK_PATTERN = re.compile(
+    r"```a2ui-json[ \t]*\r?\n?(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _prepare_assistant_response(response: str) -> tuple[str, str]:
+    """Validate A2UI output and separate stored content from memory text."""
+    matches = list(_A2UI_BLOCK_PATTERN.finditer(response))
+
+    # Preserve ordinary Markdown and reject ambiguous multiple blocks.
+    if len(matches) != 1:
+        return response, response
+
+    match = matches[0]
+
+    try:
+        payload = json.loads(match.group(1))
+        validated_messages = validate_a2ui_message_batch(payload)
+    except ValueError:
+        logger.warning(
+            "Invalid A2UI response received; preserving the Markdown response."
+        )
+        return response, response
+
+    readable_text = (response[: match.start()] + response[match.end() :]).strip()
+
+    envelope = {
+        "type": "a2ui",
+        "version": "1.0",
+        "text": readable_text,
+        "messages": validated_messages,
+    }
+
+    stored_response = json.dumps(
+        envelope,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    # Never send raw A2UI protocol JSON to long-term memory extraction.
+    memory_response = readable_text or (
+        "The assistant provided a structured visual response."
+    )
+
+    return stored_response, memory_response
 
 
 @router.post(
@@ -389,12 +439,17 @@ async def send_conversation_message(
             detail="The text generation provider returned an unusable response.",
         ) from exc
 
+    # Validate and prepare the assistant response for storage and memory.
+    stored_response, memory_response = _prepare_assistant_response(
+        agent_response.response
+    )
+
     try:
         assistant_message = storage.append_message(
             conversation_id=conversation_id,
             client_id=None,
             role="assistant",
-            content=agent_response.response,
+            content=stored_response,
             user_id=user_id,
         )
     except (psycopg.Error, ValueError) as exc:
@@ -413,7 +468,7 @@ async def send_conversation_message(
             *capture_context,
             {
                 "role": "assistant",
-                "content": agent_response.response,
+                "content": memory_response,
             },
         ]
 
