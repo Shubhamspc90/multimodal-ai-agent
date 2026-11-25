@@ -10,6 +10,9 @@ from backend.app.api import dependencies as auth_dependencies
 from backend.app.api.routes import conversations as conversations_route
 from backend.app.main import app
 from backend.app.schemas.agent import AgentInputType, AgentRequest, AgentResponse
+from backend.app.services.diagram_prompt import (
+    DIAGRAM_GENERATION_SYSTEM_PROMPT,
+)
 from backend.app.services.ollama_provider import OllamaProviderError
 
 
@@ -505,7 +508,14 @@ def test_send_conversation_message_saves_user_and_ai_messages(
     assert saved_conversation is not None
     assert len(saved_conversation["messages"]) == 2
 
-    assert agent_service.received_messages == [
+    received_messages = agent_service.received_messages
+
+    assert received_messages is not None
+    assert received_messages[0] == {
+        "role": "system",
+        "content": DIAGRAM_GENERATION_SYSTEM_PROMPT,
+    }
+    assert received_messages[1:] == [
         {
             "role": "user",
             "content": "Explain AI agents.",
@@ -576,13 +586,18 @@ def test_send_conversation_message_includes_relevant_long_term_memories(
     received_messages = agent_service.received_messages
 
     assert received_messages is not None
-    assert received_messages[0]["role"] == "system"
-    assert "untrusted reference data" in received_messages[0]["content"]
-    assert (
-        "Prefers concise technical explanations." in (received_messages[0]["content"])
-    )
 
-    assert received_messages[1:] == [
+    # Diagram instructions and long-term memories remain separate.
+    assert received_messages[0] == {
+        "role": "system",
+        "content": DIAGRAM_GENERATION_SYSTEM_PROMPT,
+    }
+
+    assert received_messages[1]["role"] == "system"
+    assert "untrusted reference data" in received_messages[1]["content"]
+    assert "Prefers concise technical explanations." in received_messages[1]["content"]
+
+    assert received_messages[2:] == [
         {
             "role": "user",
             "content": "Explain AI agents.",
@@ -641,7 +656,14 @@ def test_send_conversation_message_continues_when_memory_retrieval_fails(
 
     assert response.status_code == 200
 
-    assert agent_service.received_messages == [
+    received_messages = agent_service.received_messages
+
+    assert received_messages is not None
+    assert received_messages[0] == {
+        "role": "system",
+        "content": DIAGRAM_GENERATION_SYSTEM_PROMPT,
+    }
+    assert received_messages[1:] == [
         {
             "role": "user",
             "content": "Explain AI agents.",
@@ -937,8 +959,18 @@ def test_send_conversation_message_uses_only_latest_twenty_messages(
         },
     ]
 
-    assert agent_service.received_messages == expected_context
-    assert len(agent_service.received_messages) == 20
+    received_messages = agent_service.received_messages
+
+    assert received_messages is not None
+    assert received_messages[0] == {
+        "role": "system",
+        "content": DIAGRAM_GENERATION_SYSTEM_PROMPT,
+    }
+
+    # All twenty original conversation messages must remain unchanged.
+    assert received_messages[1:] == expected_context
+    assert len(received_messages[1:]) == 20
+    assert len(received_messages) == 21
 
 
 def test_send_conversation_message_captures_only_conversation_messages(

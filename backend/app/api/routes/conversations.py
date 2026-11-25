@@ -23,6 +23,9 @@ from backend.app.schemas.chat_history import (
 )
 from backend.app.services.agent_service import AgentService
 from backend.app.services.chat_history import PostgresChatHistoryStorage
+from backend.app.services.diagram_prompt import (
+    DIAGRAM_GENERATION_SYSTEM_PROMPT,
+)
 from backend.app.services.embedding_service import EmbeddingService
 from backend.app.services.long_term_memory_capture import LongTermMemoryCapture
 from backend.app.services.long_term_memory_extractor import (
@@ -355,6 +358,14 @@ async def send_conversation_message(
             "Long-term memory retrieval failed; continuing without it.",
             exc_info=True,
         )
+
+    context.insert(
+        0,
+        {
+            "role": "system",
+            "content": DIAGRAM_GENERATION_SYSTEM_PROMPT,
+        },
+    )
 
     try:
         service: AgentService = get_agent_service()
