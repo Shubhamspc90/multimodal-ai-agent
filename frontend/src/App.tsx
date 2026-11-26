@@ -416,11 +416,15 @@ type A2uiEnvelope = {
 type AssistantMessageContentProps = {
   messageId: number;
   content: string;
+  onFormSubmit: (message: string) => void;
+  isSubmitting: boolean;
 };
 
 function AssistantMessageContent({
   messageId,
   content,
+  onFormSubmit,
+  isSubmitting,
 }: AssistantMessageContentProps) {
   const a2uiEnvelope = useMemo<A2uiEnvelope | null>(() => {
     try {
@@ -481,6 +485,8 @@ function AssistantMessageContent({
       <A2uiRenderer
         key={messageId}
         messages={a2uiEnvelope.messages}
+        onFormSubmit={onFormSubmit}
+        isSubmitting={isSubmitting}
       />
     </div>
   );
@@ -954,8 +960,8 @@ function App() {
     ],
   );
 
-  const handleSendMessage = useCallback(async () => {
-    const message = messageDraft.trim();
+  const handleSendMessage = useCallback(async (messageOverride?: string) => {
+     const message = (messageOverride ?? messageDraft).trim();
 
     if (
       !message ||
@@ -978,7 +984,9 @@ function App() {
 
     shouldAutoScrollRef.current = true;
     setChatMessages((previous) => [...previous, userMessage]);
-    setMessageDraft("");
+    if (messageOverride === undefined) {
+      setMessageDraft("");
+    }
     setChatError("");
     setHistoryError("");
     setIsSending(true);
@@ -2561,10 +2569,20 @@ function App() {
                             </span>
                             {message.role === "assistant" ? (
                               <AssistantMessageContent
-                                key={message.id}
-                                messageId={message.id}
-                                content={message.content}
-                              />
+                              key={message.id}
+                              messageId={message.id}
+                              content={message.content}
+                              onFormSubmit={(formMessage) => {
+                                void handleSendMessage(formMessage);
+                              }}
+                              isSubmitting={
+                                isSending ||
+                                isLoadingHistory ||
+                                isLoadingConversation ||
+                                isCreatingConversation ||
+                                voiceRecordingStatus !== "idle"
+                              }
+                            />
                             ) : (
                               <p>{message.content}</p>
                             )}

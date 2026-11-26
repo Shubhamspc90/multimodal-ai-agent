@@ -26,6 +26,7 @@ ALLOWED_OPERATIONS = {
     "deleteSurface",
 }
 
+
 ALLOWED_COMPONENTS = {
     "Text",
     "Row",
@@ -33,7 +34,16 @@ ALLOWED_COMPONENTS = {
     "List",
     "Card",
     "Divider",
+    "TextField",
+    "CheckBox",
+    "ChoicePicker",
+    "Slider",
+    "DateTimeInput",
+    "Button",
 }
+
+
+ALLOWED_EVENTS = {"submit_form"}
 
 COMPONENT_PROPERTIES = {
     "Text": {"text", "variant", "weight"},
@@ -42,6 +52,28 @@ COMPONENT_PROPERTIES = {
     "List": {"children", "direction", "align", "weight"},
     "Card": {"child", "weight"},
     "Divider": {"axis", "weight"},
+    "TextField": {"label", "value", "placeholder", "variant", "weight"},
+    "CheckBox": {"label", "value", "weight"},
+    "ChoicePicker": {
+        "options",
+        "value",
+        "variant",
+        "label",
+        "displayStyle",
+        "filterable",
+        "weight",
+    },
+    "Slider": {"label", "min", "max", "value", "steps", "weight"},
+    "DateTimeInput": {
+        "value",
+        "enableDate",
+        "enableTime",
+        "min",
+        "max",
+        "label",
+        "weight",
+    },
+    "Button": {"child", "action", "variant", "weight"},
 }
 
 JUSTIFY_VALUES = {
@@ -126,7 +158,7 @@ def _validate_data_binding(value: Any, field: str) -> bool:
     if not isinstance(value, Mapping):
         return False
 
-    if set(value) not in ({"@path"}, {"path"}):
+    if set(value) != {"@path"}:
         return False
 
     path = next(iter(value.values()))
@@ -210,6 +242,197 @@ def _validate_child_ids(value: Any, field: str) -> None:
         _validate_component_identifier(child_id, f"{field}[{index}]")
 
 
+def _validate_text_or_binding(value: Any, field: str) -> None:
+    """Accept bounded plain text or a single safe data binding."""
+    if isinstance(value, str):
+        _validate_string(value, field)
+    elif not _validate_data_binding(value, field):
+        raise ValueError(f"{field} must be text or a data binding.")
+
+
+def _validate_bound_input(value: Any, field: str) -> None:
+    """Require an input value to be connected to the A2UI DataModel."""
+    if not _validate_data_binding(value, field):
+        raise ValueError(f"{field} must be a DataModel binding.")
+
+
+def _validate_finite_number(value: Any, field: str) -> None:
+    """Validate a finite JSON number, excluding booleans."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        raise ValueError(f"{field} must be a finite number.")
+
+
+def _validate_interactive_component(
+    component: Mapping[str, Any],
+    component_type: str,
+    field: str,
+) -> None:
+    """Validate supported interactive Basic Catalog components."""
+
+    if component_type == "TextField":
+        if "label" not in component or "value" not in component:
+            raise ValueError(f"{field} requires label and value.")
+
+        _validate_text_or_binding(component["label"], f"{field}.label")
+        _validate_bound_input(component["value"], f"{field}.value")
+
+        if "placeholder" in component:
+            _validate_text_or_binding(
+                component["placeholder"],
+                f"{field}.placeholder",
+            )
+
+        variant = component.get("variant", "shortText")
+        if not isinstance(variant, str) or variant not in {
+            "longText",
+            "number",
+            "shortText",
+            "obscured",
+        }:
+            raise ValueError(f"{field}.variant is invalid.")
+
+    elif component_type == "CheckBox":
+        if "label" not in component or "value" not in component:
+            raise ValueError(f"{field} requires label and value.")
+
+        _validate_text_or_binding(component["label"], f"{field}.label")
+        _validate_bound_input(component["value"], f"{field}.value")
+
+    elif component_type == "ChoicePicker":
+        if "options" not in component or "value" not in component:
+            raise ValueError(f"{field} requires options and value.")
+
+        options = component["options"]
+        if not isinstance(options, list) or not options or len(options) > 100:
+            raise ValueError(f"{field}.options must be a non-empty bounded list.")
+
+        option_values: set[str] = set()
+
+        for option_index, option in enumerate(options):
+            option_field = f"{field}.options[{option_index}]"
+            option = _require_record(option, option_field)
+
+            _require_exact_keys(
+                option,
+                {"value"},
+                {"label"},
+                option_field,
+            )
+
+            option_value = option["value"]
+            _validate_string(option_value, f"{option_field}.value")
+
+            if not option_value:
+                raise ValueError(f"{option_field}.value cannot be empty.")
+
+            if option_value in option_values:
+                raise ValueError(f"{field}.options contains duplicate values.")
+
+            option_values.add(option_value)
+
+            if "label" in option:
+                _validate_text_or_binding(
+                    option["label"],
+                    f"{option_field}.label",
+                )
+
+        _validate_bound_input(component["value"], f"{field}.value")
+
+        variant = component.get("variant")
+        if not isinstance(variant, str) or variant not in {
+            "multipleSelection",
+            "mutuallyExclusive",
+        }:
+            raise ValueError(f"{field}.variant is invalid.")
+
+        if "label" in component:
+            _validate_text_or_binding(component["label"], f"{field}.label")
+
+        display_style = component.get("displayStyle", "checkbox")
+        if not isinstance(display_style, str) or display_style not in {
+            "checkbox",
+            "chips",
+        }:
+            raise ValueError(f"{field}.displayStyle is invalid.")
+
+        if "filterable" in component and not isinstance(
+            component["filterable"],
+            bool,
+        ):
+            raise ValueError(f"{field}.filterable must be a boolean.")
+
+    elif component_type == "Slider":
+        if "max" not in component or "value" not in component:
+            raise ValueError(f"{field} requires max and value.")
+
+        minimum = component.get("min", 0)
+        maximum = component["max"]
+
+        _validate_finite_number(minimum, f"{field}.min")
+        _validate_finite_number(maximum, f"{field}.max")
+
+        if minimum >= maximum:
+            raise ValueError(f"{field}.max must be greater than min.")
+
+        _validate_bound_input(component["value"], f"{field}.value")
+
+        if "label" in component:
+            _validate_text_or_binding(component["label"], f"{field}.label")
+
+        if "steps" in component:
+            _validate_finite_number(component["steps"], f"{field}.steps")
+            if component["steps"] <= 0:
+                raise ValueError(f"{field}.steps must be greater than zero.")
+
+    elif component_type == "DateTimeInput":
+        if "value" not in component:
+            raise ValueError(f"{field}.value is required.")
+
+        _validate_bound_input(component["value"], f"{field}.value")
+
+        for property_name in ("enableDate", "enableTime"):
+            if property_name in component and not isinstance(
+                component[property_name],
+                bool,
+            ):
+                raise ValueError(f"{field}.{property_name} must be a boolean.")
+
+        for property_name in ("min", "max", "label"):
+            if property_name in component:
+                _validate_text_or_binding(
+                    component[property_name],
+                    f"{field}.{property_name}",
+                )
+
+    elif component_type == "Button":
+        if "child" not in component or "action" not in component:
+            raise ValueError(f"{field} requires child and action.")
+
+        _validate_component_identifier(component["child"], f"{field}.child")
+
+        action = _require_record(component["action"], f"{field}.action")
+        _require_exact_keys(action, {"event"}, set(), f"{field}.action")
+
+        event = _require_record(action["event"], f"{field}.action.event")
+        _require_exact_keys(event, {"name"}, set(), f"{field}.action.event")
+
+        event_name = event["name"]
+        if not isinstance(event_name, str) or event_name not in ALLOWED_EVENTS:
+            raise ValueError(f"{field} uses an unsupported action event.")
+
+        variant = component.get("variant", "default")
+        if not isinstance(variant, str) or variant not in {
+            "default",
+            "primary",
+            "borderless",
+        }:
+            raise ValueError(f"{field}.variant is invalid.")
+
+
 def _validate_component(component: Any, index: int) -> None:
     """Validate one component against the restricted Basic Catalog subset."""
     field = f"components[{index}]"
@@ -251,8 +474,6 @@ def _validate_component(component: Any, index: int) -> None:
         if isinstance(text_value, str):
             _validate_string(text_value, f"{field}.text")
 
-            # Basic Catalog Text supports simple Markdown, not HTML,
-            # Markdown links, or embedded images.
             if (
                 re.search(r"<[^>]*>", text_value)
                 or "![" in text_value
@@ -300,10 +521,21 @@ def _validate_component(component: Any, index: int) -> None:
             raise ValueError(f"{field}.child is required.")
 
         _validate_component_identifier(component["child"], f"{field}.child")
+
     elif component_type == "Divider":
         axis = component.get("axis", "horizontal")
         if not isinstance(axis, str) or axis not in {"horizontal", "vertical"}:
             raise ValueError(f"{field}.axis is invalid.")
+
+    elif component_type in {
+        "TextField",
+        "CheckBox",
+        "ChoicePicker",
+        "Slider",
+        "DateTimeInput",
+        "Button",
+    }:
+        _validate_interactive_component(component, component_type, field)
 
 
 def _validate_components(value: Any, field: str) -> None:
@@ -364,9 +596,7 @@ def _validate_message(message: Any, index: int) -> None:
                 raise ValueError(f"{field} specifies an unsupported catalog.")
 
         if payload.get("sendDataModel", False) is not False:
-            raise ValueError(
-                f"{field} cannot enable sendDataModel in display-only mode."
-            )
+            raise ValueError(f"{field} cannot enable sendDataModel in restricted mode.")
 
         if "components" in payload:
             _validate_components(
