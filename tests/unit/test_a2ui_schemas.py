@@ -504,3 +504,242 @@ def test_rejects_invalid_card_child_identifier() -> None:
 
     with pytest.raises(ValueError, match="UAX #31"):
         validate_a2ui_message_batch(messages)
+
+
+def test_accepts_safe_interactive_form_components() -> None:
+    """Accept bound inputs and a restricted form submission event."""
+    messages = [
+        {
+            "version": "1.0",
+            "createSurface": {
+                "surfaceId": "formSurface",
+                "catalogId": A2UI_BASIC_CATALOG_ID,
+                "sendDataModel": False,
+                "dataModel": {
+                    "name": "",
+                    "enrolled": False,
+                    "subjects": [],
+                    "score": 50,
+                    "date": "",
+                },
+            },
+        },
+        {
+            "version": "1.0",
+            "updateComponents": {
+                "surfaceId": "formSurface",
+                "components": [
+                    {
+                        "id": "root",
+                        "component": "Column",
+                        "children": [
+                            "nameField",
+                            "enrolledField",
+                            "subjectPicker",
+                            "scoreSlider",
+                            "dateField",
+                            "submitLabel",
+                            "submitButton",
+                        ],
+                    },
+                    {
+                        "id": "nameField",
+                        "component": "TextField",
+                        "label": "Student name",
+                        "value": {"@path": "/name"},
+                        "placeholder": "Enter name",
+                    },
+                    {
+                        "id": "enrolledField",
+                        "component": "CheckBox",
+                        "label": "Currently enrolled",
+                        "value": {"@path": "/enrolled"},
+                    },
+                    {
+                        "id": "subjectPicker",
+                        "component": "ChoicePicker",
+                        "options": [
+                            {"value": "math", "label": "Mathematics"},
+                            {"value": "science", "label": "Science"},
+                        ],
+                        "value": {"@path": "/subjects"},
+                        "variant": "multipleSelection",
+                        "displayStyle": "checkbox",
+                    },
+                    {
+                        "id": "scoreSlider",
+                        "component": "Slider",
+                        "min": 0,
+                        "max": 100,
+                        "value": {"@path": "/score"},
+                        "steps": 1,
+                    },
+                    {
+                        "id": "dateField",
+                        "component": "DateTimeInput",
+                        "value": {"@path": "/date"},
+                        "enableDate": True,
+                        "enableTime": False,
+                    },
+                    {
+                        "id": "submitLabel",
+                        "component": "Text",
+                        "text": "Submit form",
+                    },
+                    {
+                        "id": "submitButton",
+                        "component": "Button",
+                        "child": "submitLabel",
+                        "action": {
+                            "event": {"name": "submit_form"},
+                        },
+                        "variant": "primary",
+                    },
+                ],
+            },
+        },
+    ]
+
+    assert validate_a2ui_message_batch(messages) == messages
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        {
+            "id": "field",
+            "component": "TextField",
+            "label": "Name",
+            "value": "static value",
+        },
+        {
+            "id": "field",
+            "component": "TextField",
+            "label": "Name",
+            "value": {"path": "/name"},
+        },
+        {
+            "id": "field",
+            "component": "CheckBox",
+            "label": "Accept",
+            "value": True,
+        },
+        {
+            "id": "picker",
+            "component": "ChoicePicker",
+            "options": [{"value": "a"}],
+            "value": {"@path": "/choice"},
+            "variant": "unsupported",
+        },
+        {
+            "id": "slider",
+            "component": "Slider",
+            "max": 100,
+            "value": {"@call": "execute"},
+        },
+        {
+            "id": "date",
+            "component": "DateTimeInput",
+            "value": {"@path": "/date"},
+            "enableDate": "yes",
+        },
+        {
+            "id": "button",
+            "component": "Button",
+            "child": "label",
+            "action": {
+                "functionCall": {
+                    "name": "execute",
+                },
+            },
+        },
+        {
+            "id": "button",
+            "component": "Button",
+            "child": "label",
+            "action": {
+                "event": {"name": "open_url"},
+            },
+        },
+        {
+            "id": "button",
+            "component": "Button",
+            "child": "label",
+            "action": {
+                "event": {
+                    "name": "submit_form",
+                    "context": {"url": "https://attacker.example"},
+                },
+            },
+        },
+        {
+            "id": "button",
+            "component": "Button",
+            "child": "label",
+            "action": {
+                "event": {"name": "submit_form"},
+            },
+            "@checks": [],
+        },
+    ],
+)
+def test_rejects_unsafe_interactive_components(
+    component: dict[str, object],
+) -> None:
+    """Reject unbound values, invalid actions and unsafe component properties."""
+    messages = [
+        {
+            "version": "1.0",
+            "updateComponents": {
+                "surfaceId": "formSurface",
+                "components": [component],
+            },
+        }
+    ]
+
+    with pytest.raises(ValueError):
+        validate_a2ui_message_batch(messages)
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        {
+            "id": "field",
+            "component": "TextField",
+            "label": "Name",
+            "value": {"@path": "/name"},
+            "variant": [],
+        },
+        {
+            "id": "picker",
+            "component": "ChoicePicker",
+            "options": [{"value": "a"}],
+            "value": {"@path": "/choice"},
+            "variant": [],
+        },
+        {
+            "id": "button",
+            "component": "Button",
+            "child": "label",
+            "action": {"event": {"name": "submit_form"}},
+            "variant": [],
+        },
+    ],
+)
+def test_rejects_malformed_interactive_enum_values(
+    component: dict[str, object],
+) -> None:
+    """Malformed enum values must raise ValueError, not TypeError."""
+    messages = [
+        {
+            "version": "1.0",
+            "updateComponents": {
+                "surfaceId": "formSurface",
+                "components": [component],
+            },
+        }
+    ]
+
+    with pytest.raises(ValueError):
+        validate_a2ui_message_batch(messages)
