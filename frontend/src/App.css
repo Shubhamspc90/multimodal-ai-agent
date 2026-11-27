@@ -2554,3 +2554,7 @@ button:focus-visible {
     padding-left: 16px;
   }
 }
+/* Keep A2UI-generated form and dashboard text readable on light message surfaces. */
+.a2ui-container {
+  --a2ui-text-color-text: #20253a;
+}
