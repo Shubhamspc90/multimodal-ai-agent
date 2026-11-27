@@ -1259,7 +1259,10 @@ button:focus-visible {
 .chat-composer textarea {
   flex: 1;
   min-width: 0;
-  resize: vertical;
+  max-height: 240px;
+  box-sizing: border-box;
+  resize: none;
+  overflow-y: hidden;
   padding: 12px 14px;
   border: 1px solid #dfe3f0;
   border-radius: 12px;
