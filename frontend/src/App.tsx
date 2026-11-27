@@ -529,6 +529,7 @@ function App() {
 
   const chatMessagesRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const messageDraftTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
@@ -960,8 +961,28 @@ function App() {
     ],
   );
 
+  // AUTO-RESIZE CHAT COMPOSER
+  useEffect(() => {
+    const textarea = messageDraftTextareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    const maxHeight = 240;
+
+    // Reset height first so the textarea can shrink.
+    textarea.style.height = "auto";
+
+    const contentHeight = textarea.scrollHeight;
+
+    textarea.style.height = `${Math.min(contentHeight, maxHeight)}px`;
+    textarea.style.overflowY =
+      contentHeight > maxHeight ? "auto" : "hidden";
+  }, [messageDraft]);
+
   const handleSendMessage = useCallback(async (messageOverride?: string) => {
-     const message = (messageOverride ?? messageDraft).trim();
+    const message = (messageOverride ?? messageDraft).trim();
 
     if (
       !message ||
@@ -2569,20 +2590,20 @@ function App() {
                             </span>
                             {message.role === "assistant" ? (
                               <AssistantMessageContent
-                              key={message.id}
-                              messageId={message.id}
-                              content={message.content}
-                              onFormSubmit={(formMessage) => {
-                                void handleSendMessage(formMessage);
-                              }}
-                              isSubmitting={
-                                isSending ||
-                                isLoadingHistory ||
-                                isLoadingConversation ||
-                                isCreatingConversation ||
-                                voiceRecordingStatus !== "idle"
-                              }
-                            />
+                                key={message.id}
+                                messageId={message.id}
+                                content={message.content}
+                                onFormSubmit={(formMessage) => {
+                                  void handleSendMessage(formMessage);
+                                }}
+                                isSubmitting={
+                                  isSending ||
+                                  isLoadingHistory ||
+                                  isLoadingConversation ||
+                                  isCreatingConversation ||
+                                  voiceRecordingStatus !== "idle"
+                                }
+                              />
                             ) : (
                               <p>{message.content}</p>
                             )}
@@ -2634,6 +2655,7 @@ function App() {
                         }}
                       >
                         <textarea
+                          ref={messageDraftTextareaRef}
                           aria-label="Your message"
                           placeholder="Ask something..."
                           value={messageDraft}
